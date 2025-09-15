@@ -126,8 +126,8 @@ export interface ServerConfig {
     redis_url: string;
   };
   memory: {
-    chromadb_url: string;
-    collection_name: string;
+    mongodb_url: string;
+    database_name: string;
   };
 }
 
@@ -146,26 +146,10 @@ export interface APIResponse<T> {
   timestamp: string;
 }
 
-export interface RateLimitInfo {
-  remaining: number;
-  reset_time: number;
-  total: number;
-}
-
 export interface CacheEntry<T> {
   data: T;
   timestamp: number;
   ttl: number;
-}
-
-export interface AnalysisResult {
-  type: 'quick' | 'standard' | 'comprehensive';
-  provider: string;
-  model: string;
-  confidence: number;
-  insights: string[];
-  reasoning: string;
-  execution_time: number;
 }
 
 export interface WebSocketMessage {

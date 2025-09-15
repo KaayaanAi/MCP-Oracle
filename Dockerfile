@@ -11,8 +11,8 @@ RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Install ALL dependencies including devDependencies for TypeScript build
+RUN npm ci && npm cache clean --force
 
 # Copy source code
 COPY src/ ./src/
@@ -49,12 +49,12 @@ RUN mkdir -p logs data && \
 # Switch to non-root user
 USER mcp-oracle
 
-# Expose ports
-EXPOSE 3000 3001
+# Expose ports for MCP Oracle
+EXPOSE 4006 4007
 
-# Health check
+# Health check on correct port
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD curl -f http://localhost:3000/health || exit 1
+  CMD curl -f http://localhost:4006/health || exit 1
 
-# Default command
+# Default command with updated ports
 CMD ["node", "build/index.js", "--http", "--ws", "--sse"]

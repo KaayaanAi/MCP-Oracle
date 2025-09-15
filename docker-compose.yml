@@ -8,72 +8,33 @@ services:
     container_name: mcp-oracle
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
-      - "${WS_PORT:-3001}:3001"
+      - "${PORT:-4006}:4006"
+      - "${WS_PORT:-4007}:4007"
     environment:
       - NODE_ENV=production
-      - PORT=3000
-      - WS_PORT=3001
+      - PORT=4006
+      - WS_PORT=4007
       - REDIS_URL=redis://redis:6379
-      - CHROMADB_HOST=http://chromadb:8000
+      - MONGODB_URL=mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle
       - LOG_LEVEL=${LOG_LEVEL:-info}
     env_file:
       - .env
     depends_on:
-      - chromadb
       - redis
+    external_links:
+      - mongodb:mongodb
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
     networks:
       - mcp-oracle-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:4006/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: mcp-oracle-chromadb
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
-    environment:
-      - CHROMA_SERVER_HOST=0.0.0.0
-      - CHROMA_SERVER_PORT=8000
-      - CHROMA_DB_IMPL=clickhouse
-      - CLICKHOUSE_HOST=clickhouse
-      - CLICKHOUSE_PORT=8123
-    volumes:
-      - chromadb_data:/chroma/chroma
-    depends_on:
-      - clickhouse
-    networks:
-      - mcp-oracle-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    container_name: mcp-oracle-clickhouse
-    restart: unless-stopped
-    environment:
-      - CLICKHOUSE_DB=chroma
-      - CLICKHOUSE_USER=chroma
-      - CLICKHOUSE_PASSWORD=chroma
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-    ports:
-      - "8123:8123"
-      - "9000:9000"
-    networks:
-      - mcp-oracle-network
 
   redis:
     image: redis:7-alpine
@@ -108,27 +69,7 @@ services:
     profiles:
       - debug
 
-  # Optional: ChromaDB Admin UI
-  chroma-admin:
-    image: ghcr.io/amikos-tech/chromadb-admin:latest
-    container_name: mcp-oracle-chroma-admin
-    restart: unless-stopped
-    environment:
-      - CHROMA_URL=http://chromadb:8000
-    ports:
-      - "3001:3000"
-    depends_on:
-      - chromadb
-    networks:
-      - mcp-oracle-network
-    profiles:
-      - debug
-
 volumes:
-  chromadb_data:
-    driver: local
-  clickhouse_data:
-    driver: local
   redis_data:
     driver: local
 

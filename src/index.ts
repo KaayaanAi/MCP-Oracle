@@ -16,8 +16,8 @@ const defaultConfig: ServerConfig = {
     sse: process.argv.includes('--sse')
   },
   ports: {
-    http: parseInt(process.env.PORT || '3000'),
-    websocket: parseInt(process.env.WS_PORT || '3001')
+    http: parseInt(process.env.PORT || '4006'),
+    websocket: parseInt(process.env.WS_PORT || '4007')
   },
   ai: {
     providers: {
@@ -69,8 +69,8 @@ const defaultConfig: ServerConfig = {
     redis_url: process.env.REDIS_URL || 'redis://localhost:6379'
   },
   memory: {
-    chromadb_url: process.env.CHROMADB_HOST || 'http://localhost:8000',
-    collection_name: 'mcp_oracle_patterns'
+    mongodb_url: process.env.MONGODB_URL || 'mongodb://localhost:27017/mcp_oracle',
+    database_name: 'mcp_oracle'
   }
 };
 
@@ -142,10 +142,10 @@ EXAMPLES:
   mcp-oracle --http --ws --sse  # Web protocols only
 
 ENVIRONMENT VARIABLES:
-  PORT                HTTP server port (default: 3000)
-  WS_PORT             WebSocket server port (default: 3001)
+  PORT                HTTP server port (default: 4006)
+  WS_PORT             WebSocket server port (default: 4007)
   REDIS_URL           Redis connection URL
-  CHROMADB_HOST       ChromaDB host URL
+  MONGODB_URL         MongoDB connection URL
   GROQ_API_KEY        Groq API key for quick analysis
   ANTHROPIC_API_KEY   Anthropic API key for standard analysis
   OPENAI_API_KEY      OpenAI API key for deep analysis
