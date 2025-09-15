@@ -50,4 +50,7 @@ export const loggers = {
   alphavantage: createLogger('alphavantage'),
   newsapi: createLogger('newsapi'),
   cryptopanic: createLogger('cryptopanic'),
+  ai: createLogger('ai'),
+  news: createLogger('news'),
+  technical: createLogger('technical'),
 };

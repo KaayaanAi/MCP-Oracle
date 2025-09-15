@@ -119,6 +119,7 @@ function parseArgs(): { config: ServerConfig; help: boolean } {
 }
 
 function showHelp(): void {
+  // Using console.log here is appropriate for CLI help text
   console.log(`
 🚀 MCP Oracle - Advanced Financial Market Analysis Server
 
@@ -191,9 +192,9 @@ async function main(): Promise<void> {
     });
 
   } catch (error) {
-    // Only log to stderr if not STDIO mode
+    // Only log to stderr if not STDIO mode to avoid interfering with MCP protocol
     if (!config.protocols.stdio) {
-      console.error('❌ Fatal error starting MCP Oracle Server:', error);
+      process.stderr.write(`❌ Fatal error starting MCP Oracle Server: ${error}\n`);
     }
     process.exit(1);
   }
@@ -201,17 +202,17 @@ async function main(): Promise<void> {
 
 // Handle uncaught errors
 process.on('uncaughtException', (error) => {
-  console.error('💥 Uncaught Exception:', error);
+  process.stderr.write(`💥 Uncaught Exception: ${error}\n`);
   process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+  process.stderr.write(`💥 Unhandled Rejection at: ${promise}, reason: ${reason}\n`);
   process.exit(1);
 });
 
 // Start the server
 main().catch((error) => {
-  console.error('💥 Failed to start server:', error);
+  process.stderr.write(`💥 Failed to start server: ${error}\n`);
   process.exit(1);
 });
