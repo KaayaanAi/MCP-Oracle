@@ -5,21 +5,50 @@
     "moduleResolution": "Node16",
     "outDir": "./build",
     "rootDir": "./src",
+
+    // Strict Type Checking Options
     "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+
+    // Additional Checks
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+
+    // Module Options
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+
+    // Emit Options
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "resolveJsonModule": true,
-    "allowImportingTsExtensions": false,
+    "removeComments": false,
     "noEmit": false,
-    "isolatedModules": true,
-    "verbatimModuleSyntax": false,
-    "lib": ["ES2022"],
-    "types": ["node"]
+    "importHelpers": true,
+    "downlevelIteration": true,
+
+    // Advanced Options
+    "lib": ["ES2022", "ES2022.String", "ES2022.Array"],
+    "types": ["node"],
+    "typeRoots": ["./node_modules/@types", "./src/types"]
   },
   "include": [
     "src/**/*"

@@ -1,30 +1,52 @@
-import type { PatternMatch } from '../types/index.js';
+// Third-party packages
+import type { MongoClient as MongoClientType, Db, Collection } from 'mongodb';
+
+// Local imports
+import type {
+  PatternMatch,
+  AssetSymbol,
+  Timestamp
+} from '../types/index.js';
 import { loggers } from '../utils/logger.js';
 
 // Make mongodb optional - will be loaded dynamically
-let MongoClient: any;
+let MongoClient: typeof MongoClientType | undefined;
+
+// Strongly typed MongoDB document interfaces
+export type ImpactSeverity = 'low' | 'medium' | 'high';
+export type PatternId = string & { readonly __brand: 'PatternId' };
+export type MongoObjectId = string & { readonly __brand: 'MongoObjectId' };
+
+export interface MarketConditions {
+  readonly assets: readonly AssetSymbol[];
+  readonly sentiment: number;
+  readonly volatility: number;
+  readonly volume: number;
+  readonly timestamp: Timestamp;
+}
+
+export interface PatternOutcome {
+  readonly price_change_24h: Record<AssetSymbol, number>;
+  readonly duration_hours: number;
+  readonly impact_severity: ImpactSeverity;
+}
+
+export interface PatternMetadata {
+  readonly source: string;
+  readonly confidence: number;
+  readonly tags: readonly string[];
+  readonly created_at: Timestamp;
+  readonly updated_at: Timestamp;
+}
 
 export interface MarketPattern {
-  id: string;
-  event: string;
-  market_conditions: {
-    assets: string[];
-    sentiment: number;
-    volatility: number;
-    volume: number;
-    timestamp: string;
-  };
-  outcome: {
-    price_change_24h: Record<string, number>;
-    duration_hours: number;
-    impact_severity: 'low' | 'medium' | 'high';
-  };
-  metadata: {
-    source: string;
-    confidence: number;
-    tags: string[];
-  };
-  embedding_text?: string;
+  readonly _id?: MongoObjectId;
+  readonly id: PatternId;
+  readonly event: string;
+  readonly market_conditions: MarketConditions;
+  readonly outcome: PatternOutcome;
+  readonly metadata: PatternMetadata;
+  readonly embedding_text?: string;
 }
 
 export interface PriceHistory {
@@ -47,19 +69,28 @@ export interface NewsCache {
   ttl: Date;
 }
 
+// Database operation results
+export interface DatabaseStats {
+  readonly total_patterns: number;
+  readonly recent_patterns: number;
+  readonly total_price_records: number;
+  readonly total_news_records: number;
+  readonly database_size_mb: number;
+}
+
 export class MemoryLayer {
-  private client?: any;
-  private db?: any;
-  private patternsCollection?: any;
-  private priceHistoryCollection?: any;
-  private newsCacheCollection?: any;
+  private client?: MongoClientType;
+  private db?: Db;
+  private patternsCollection?: Collection<MarketPattern>;
+  private priceHistoryCollection?: Collection<PriceHistory>;
+  private newsCacheCollection?: Collection<NewsCache>;
   private connectionString: string;
   private dbName = 'mcp_oracle';
   private logger = loggers.mongodb;
 
   constructor(connectionString?: string) {
     // Default to Docker-compatible MongoDB URL
-    this.connectionString = connectionString || process.env.MONGODB_URL || 'mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle';
+    this.connectionString = connectionString || process.env['MONGODB_URL'] || 'mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle';
   }
 
   async initialize(): Promise<void> {
@@ -72,6 +103,11 @@ export class MemoryLayer {
         this.logger.warn('📦 MongoDB not available, skipping initialization', { error });
         return;
       }
+    }
+
+    if (!MongoClient) {
+      this.logger.warn('📦 MongoDB client not loaded');
+      return;
     }
 
     try {
@@ -96,7 +132,7 @@ export class MemoryLayer {
       await this.client.connect();
 
       // Test the connection
-      await this.client.db('admin').ping();
+      await this.client.db('admin').command({ ping: 1 });
 
       this.db = this.client.db(this.dbName);
 
@@ -162,9 +198,12 @@ export class MemoryLayer {
     }
 
     try {
-      pattern.embedding_text = this.createEmbeddingText(pattern);
+      const patternWithEmbedding = {
+        ...pattern,
+        embedding_text: this.createEmbeddingText(pattern)
+      };
 
-      await this.patternsCollection.insertOne(pattern);
+      await this.patternsCollection.insertOne(patternWithEmbedding);
       this.logger.info(`Pattern stored: ${pattern.event} (${pattern.id})`);
     } catch (error) {
       this.logger.error('Failed to store pattern:', error);
@@ -182,10 +221,8 @@ export class MemoryLayer {
 
     try {
       const results = await this.patternsCollection!
-        .find(
-          { $text: { $search: query } },
-          { score: { $meta: 'textScore' } }
-        )
+        .find({ $text: { $search: query } })
+        .project({ score: { $meta: 'textScore' } })
         .sort({ score: { $meta: 'textScore' }, 'metadata.confidence': -1 })
         .limit(limit)
         .toArray();

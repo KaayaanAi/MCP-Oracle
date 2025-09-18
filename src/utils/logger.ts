@@ -1,3 +1,4 @@
+// Third-party packages
 import winston from 'winston';
 
 // Shared logger configuration for all services
@@ -17,7 +18,7 @@ export const createLogger = (serviceName: string): winston.Logger => {
   ];
 
   // Add console logging in development or when not using STDIO
-  if (process.env.NODE_ENV !== 'production' || !process.env.MCP_STDIO_MODE) {
+  if (process.env['NODE_ENV'] !== 'production' || !process.env['MCP_STDIO_MODE']) {
     transports.push(new winston.transports.Console({
       format: winston.format.combine(
         winston.format.colorize(),
@@ -27,7 +28,7 @@ export const createLogger = (serviceName: string): winston.Logger => {
   }
 
   return winston.createLogger({
-    level: process.env.LOG_LEVEL || 'info',
+    level: process.env['LOG_LEVEL'] || 'info',
     format: winston.format.combine(
       winston.format.timestamp(),
       winston.format.errors({ stack: true }),

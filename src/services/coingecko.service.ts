@@ -1,4 +1,7 @@
+// Third-party packages
 import axios, { AxiosInstance } from 'axios';
+
+// Local imports
 import { loggers } from '../utils/logger.js';
 
 export interface CoinGeckoPrice {
@@ -50,12 +53,10 @@ export interface MarketData {
 
 export class CoinGeckoService {
   private client: AxiosInstance;
-  private apiKey: string;
   private baseUrl = 'https://api.coingecko.com/api/v3';
   private logger = loggers.coingecko;
 
   constructor(apiKey: string) {
-    this.apiKey = apiKey;
     const headers: any = {
       'Accept': 'application/json'
     };

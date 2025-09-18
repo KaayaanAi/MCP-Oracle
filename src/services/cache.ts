@@ -1,6 +1,59 @@
+// Third-party packages
 import { createClient, RedisClientType } from 'redis';
-import type { CacheEntry } from '../types/index.js';
+
+// Local imports
+import type {
+  CacheEntry,
+  Cacheable,
+  AssetSymbol,
+  Timestamp,
+  Result,
+  APIError
+} from '../types/index.js';
+import {
+  createSuccess,
+  createError,
+  createTimestamp
+} from '../types/index.js';
 import { loggers } from '../utils/logger.js';
+
+// Specific cache data types
+export interface MarketDataCacheEntry extends Cacheable {
+  readonly symbol: AssetSymbol;
+  readonly price: number;
+  readonly change_24h: number;
+  readonly volume: number;
+  readonly market_cap?: number;
+}
+
+export interface NewsDataCacheEntry extends Cacheable {
+  readonly title: string;
+  readonly content: string;
+  readonly source: string;
+  readonly sentiment_score: number;
+  readonly symbols: readonly AssetSymbol[];
+}
+
+export interface TechnicalDataCacheEntry extends Cacheable {
+  readonly symbol: AssetSymbol;
+  readonly indicators: Record<string, number | string | boolean>;
+  readonly signals: Record<string, unknown>;
+}
+
+export interface CacheStats {
+  readonly connected: boolean;
+  readonly memory_usage?: string;
+  readonly total_keys?: number;
+  readonly hit_rate?: string;
+  readonly uptime?: number;
+}
+
+export interface RateLimitResult {
+  readonly allowed: boolean;
+  readonly remaining: number;
+  readonly resetTime: number;
+  readonly windowSeconds: number;
+}
 
 export class CacheService {
   private client?: RedisClientType;
@@ -71,49 +124,100 @@ export class CacheService {
     }
   }
 
-  async get<T>(key: string): Promise<T | null> {
+  async get<T extends Cacheable = Cacheable>(key: string): Promise<Result<T, APIError>> {
     if (!this.isConnected || !this.client) {
-      return null;
+      const error: APIError = {
+        type: 'api_error',
+        code: 'CACHE_NOT_CONNECTED',
+        message: 'Cache service not connected',
+        timestamp: createTimestamp(new Date().toISOString()),
+        service: 'cache',
+        retryable: false
+      };
+      return createError(error);
     }
 
     try {
       const cached = await this.client.get(key);
-      if (!cached) return null;
+      if (!cached) {
+        const error: APIError = {
+          type: 'api_error',
+          code: 'CACHE_MISS',
+          message: `No cached data found for key: ${key}`,
+          timestamp: createTimestamp(new Date().toISOString()),
+          service: 'cache',
+          retryable: false
+        };
+        return createError(error);
+      }
 
       const entry: CacheEntry<T> = JSON.parse(cached);
 
       // Check if entry has expired
       if (Date.now() > entry.timestamp + entry.ttl * 1000) {
         await this.delete(key);
-        return null;
+        const error: APIError = {
+          type: 'api_error',
+          code: 'CACHE_EXPIRED',
+          message: `Cached data expired for key: ${key}`,
+          timestamp: createTimestamp(new Date().toISOString()),
+          service: 'cache',
+          retryable: false
+        };
+        return createError(error);
       }
 
       this.logger.debug(`Cache hit: ${key}`);
-      return entry.data;
+      return createSuccess(entry.data);
     } catch (error) {
       this.logger.warn(`Cache get error for key "${key}":`, error);
-      return null;
+      const apiError: APIError = {
+        type: 'api_error',
+        code: 'CACHE_READ_ERROR',
+        message: error instanceof Error ? error.message : 'Unknown cache error',
+        timestamp: createTimestamp(new Date().toISOString()),
+        service: 'cache',
+        retryable: true
+      };
+      return createError(apiError);
     }
   }
 
-  async set<T>(key: string, data: T, ttl?: number): Promise<boolean> {
+  async set<T extends Cacheable = Cacheable>(key: string, data: T, ttl?: number): Promise<Result<boolean, APIError>> {
     if (!this.isConnected || !this.client) {
-      return false;
+      const error: APIError = {
+        type: 'api_error',
+        code: 'CACHE_NOT_CONNECTED',
+        message: 'Cache service not connected',
+        timestamp: createTimestamp(new Date().toISOString()),
+        service: 'cache',
+        retryable: false
+      };
+      return createError(error);
     }
 
     try {
       const entry: CacheEntry<T> = {
         data,
         timestamp: Date.now(),
-        ttl: ttl || this.defaultTTL
+        ttl: ttl || this.defaultTTL,
+        key
       };
 
       await this.client.setEx(key, ttl || this.defaultTTL, JSON.stringify(entry));
       this.logger.debug(`Cache set: ${key} (TTL: ${ttl || this.defaultTTL}s)`);
-      return true;
+      return createSuccess(true);
     } catch (error) {
       this.logger.warn(`Cache set error for key "${key}":`, error);
-      return false;
+      const apiError: APIError = {
+        type: 'api_error',
+        code: 'CACHE_WRITE_ERROR',
+        message: error instanceof Error ? error.message : 'Unknown cache error',
+        timestamp: createTimestamp(new Date().toISOString()),
+        service: 'cache',
+        retryable: true
+      };
+      return createError(apiError);
     }
   }
 
@@ -174,12 +278,7 @@ export class CacheService {
     }
   }
 
-  async getStats(): Promise<{
-    connected: boolean;
-    memory_usage?: string;
-    total_keys?: number;
-    hit_rate?: string;
-  }> {
+  async getStats(): Promise<CacheStats> {
     if (!this.isConnected || !this.client) {
       return { connected: false };
     }
@@ -204,65 +303,79 @@ export class CacheService {
     }
   }
 
-  // Market-specific cache methods
-  async getCachedMarketData(symbols: string[]): Promise<any[] | null> {
-    const key = `market_data:${symbols.sort().join(',')}`;
-    return await this.get<any[]>(key);
+  // Market-specific cache methods with strong typing
+  async getCachedMarketData(symbols: readonly AssetSymbol[]): Promise<Result<MarketDataCacheEntry[], APIError>> {
+    const key = `market_data:${[...symbols].sort().join(',')}`;
+    return await this.get<MarketDataCacheEntry[]>(key);
   }
 
-  async setCachedMarketData(symbols: string[], data: any[], ttl = 300): Promise<boolean> {
-    const key = `market_data:${symbols.sort().join(',')}`;
-    return await this.set(key, data, ttl);
+  async setCachedMarketData(
+    symbols: readonly AssetSymbol[],
+    data: MarketDataCacheEntry[],
+    ttl = 300
+  ): Promise<Result<boolean, APIError>> {
+    const key = `market_data:${[...symbols].sort().join(',')}`;
+    // Add timestamp to make it Cacheable
+    const cacheableData = data.map(item => ({
+      ...item,
+      timestamp: item.timestamp || createTimestamp(new Date().toISOString())
+    })) as MarketDataCacheEntry[] & Cacheable;
+    return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedNews(symbols: string[], hours: number): Promise<any[] | null> {
+  async getCachedNews(symbols: string[], hours: number): Promise<Result<any[], APIError>> {
     const key = `news:${symbols.sort().join(',')}:${hours}h`;
     return await this.get<any[]>(key);
   }
 
-  async setCachedNews(symbols: string[], hours: number, data: any[], ttl = 1800): Promise<boolean> {
+  async setCachedNews(symbols: string[], hours: number, data: any[], ttl = 1800): Promise<Result<boolean, APIError>> {
     const key = `news:${symbols.sort().join(',')}:${hours}h`;
-    return await this.set(key, data, ttl);
+    const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) };
+    return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedSentiment(symbols: string[]): Promise<any[] | null> {
+  async getCachedSentiment(symbols: string[]): Promise<Result<any[], APIError>> {
     const key = `sentiment:${symbols.sort().join(',')}`;
     return await this.get<any[]>(key);
   }
 
-  async setCachedSentiment(symbols: string[], data: any[], ttl = 900): Promise<boolean> {
+  async setCachedSentiment(symbols: string[], data: any[], ttl = 900): Promise<Result<boolean, APIError>> {
     const key = `sentiment:${symbols.sort().join(',')}`;
-    return await this.set(key, data, ttl);
+    const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) };
+    return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedTechnicalData(symbol: string): Promise<any | null> {
+  async getCachedTechnicalData(symbol: string): Promise<Result<any, APIError>> {
     const key = `technical:${symbol}`;
     return await this.get<any>(key);
   }
 
-  async setCachedTechnicalData(symbol: string, data: any, ttl = 600): Promise<boolean> {
+  async setCachedTechnicalData(symbol: string, data: any, ttl = 600): Promise<Result<boolean, APIError>> {
     const key = `technical:${symbol}`;
-    return await this.set(key, data, ttl);
+    const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) };
+    return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedPrice(symbol: string): Promise<number | null> {
+  async getCachedPrice(symbol: string): Promise<Result<number, APIError>> {
     const key = `price:${symbol}`;
     return await this.get<number>(key);
   }
 
-  async setCachedPrice(symbol: string, price: number, ttl = 60): Promise<boolean> {
+  async setCachedPrice(symbol: string, price: number, ttl = 60): Promise<Result<boolean, APIError>> {
     const key = `price:${symbol}`;
-    return await this.set(key, price, ttl);
+    const cacheableData = { price, timestamp: createTimestamp(new Date().toISOString()) };
+    return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedForecast(symbol: string, days: number): Promise<any | null> {
+  async getCachedForecast(symbol: string, days: number): Promise<Result<any, APIError>> {
     const key = `forecast:${symbol}:${days}d`;
     return await this.get<any>(key);
   }
 
-  async setCachedForecast(symbol: string, days: number, data: any, ttl = 3600): Promise<boolean> {
+  async setCachedForecast(symbol: string, days: number, data: any, ttl = 3600): Promise<Result<boolean, APIError>> {
     const key = `forecast:${symbol}:${days}d`;
-    return await this.set(key, data, ttl);
+    const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) };
+    return await this.set(key, cacheableData, ttl);
   }
 
   // Utility methods
@@ -287,18 +400,19 @@ export class CacheService {
     }
   }
 
-  async rateLimitCheck(identifier: string, limit: number, windowSeconds: number): Promise<{
-    allowed: boolean;
-    remaining: number;
-    resetTime: number;
-  }> {
+  async rateLimitCheck(
+    identifier: string,
+    limit: number,
+    windowSeconds: number
+  ): Promise<RateLimitResult> {
     const key = `ratelimit:${identifier}`;
     const current = await this.incrementCounter(key, windowSeconds);
 
     return {
       allowed: current <= limit,
       remaining: Math.max(0, limit - current),
-      resetTime: Date.now() + (windowSeconds * 1000)
+      resetTime: Date.now() + (windowSeconds * 1000),
+      windowSeconds
     };
   }
 

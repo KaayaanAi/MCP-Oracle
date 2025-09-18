@@ -1,35 +1,36 @@
 #!/usr/bin/env node
 
+// Node.js built-ins
+import { createServer, Server as HttpServer } from "http";
+
+// Third-party packages
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { z } from "zod";
-import express from "express";
 import cors from "cors";
+import express from "express";
 import helmet from "helmet";
-import { WebSocketServer } from "ws";
-import { createServer, Server as HttpServer } from "http";
 import winston from "winston";
-import { config } from "dotenv";
+import { WebSocketServer } from "ws";
+import { z } from "zod";
 
+// Local imports
 import type {
   ServerConfig,
   MarketPulseParams,
   MarketPulseResponse,
   MCPToolResponse
 } from "../types/index.js";
+import { MemoryLayer } from '../memory/mongodb.js';
+import { AIService } from '../services/ai.service.js';
 import { CoinGeckoService } from '../services/coingecko.service.js';
 import { NewsService } from '../services/news.service.js';
 import { TechnicalAnalysisService } from '../services/technical.service.js';
-import { AIService } from '../services/ai.service.js';
-import { MemoryLayer } from '../memory/mongodb.js';
-import { CacheService } from '../services/cache.js';
 
-// Load environment variables
-config();
+// Environment variables loaded in index.js
 
 export class MCPOracleServer {
   private server!: Server;
@@ -43,7 +44,6 @@ export class MCPOracleServer {
   private technicalService?: TechnicalAnalysisService;
   private aiService?: AIService;
   private memoryLayer?: MemoryLayer;
-  private cache?: CacheService;
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -60,7 +60,7 @@ export class MCPOracleServer {
     ];
 
     // Only add console logging if not using STDIO (to avoid interfering with MCP protocol)
-    if (!this.config.protocols.stdio && process.env.NODE_ENV !== 'production') {
+    if (!this.config.protocols.stdio && process.env['NODE_ENV'] !== 'production') {
       transports.push(new winston.transports.Console({
         format: winston.format.combine(
           winston.format.colorize(),
@@ -70,7 +70,7 @@ export class MCPOracleServer {
     }
 
     this.logger = winston.createLogger({
-      level: process.env.LOG_LEVEL || 'info',
+      level: process.env['LOG_LEVEL'] || 'info',
       format: winston.format.combine(
         winston.format.timestamp(),
         winston.format.errors({ stack: true }),
@@ -88,7 +88,7 @@ export class MCPOracleServer {
       this.logger.info('🚀 Initializing REAL API services...');
 
       // Initialize CoinGecko service for REAL price data (free tier if no key)
-      const coinGeckoKey = process.env.COINGECKO_API_KEY || '';
+      const coinGeckoKey = process.env['COINGECKO_API_KEY'] || '';
       this.coinGecko = new CoinGeckoService(coinGeckoKey);
       if (coinGeckoKey) {
         this.logger.info('✅ CoinGecko service initialized with Pro API key');
@@ -97,9 +97,9 @@ export class MCPOracleServer {
       }
 
       // Initialize News service for REAL news data
-      if (process.env.NEWSAPI_KEY && process.env.CRYPTOPANIC_API_KEY) {
+      if (process.env['NEWSAPI_KEY'] && process.env['CRYPTOPANIC_API_KEY']) {
         try {
-          this.newsService = new NewsService(process.env.NEWSAPI_KEY, process.env.CRYPTOPANIC_API_KEY);
+          this.newsService = new NewsService(process.env['NEWSAPI_KEY'], process.env['CRYPTOPANIC_API_KEY']);
           this.logger.info('✅ News service initialized with real APIs (NewsAPI + CryptoPanic)');
         } catch (error) {
           this.logger.error('❌ News service initialization failed:', error);
@@ -111,9 +111,9 @@ export class MCPOracleServer {
       }
 
       // Initialize Technical Analysis service for REAL technical data
-      if (process.env.ALPHA_VANTAGE_API_KEY) {
+      if (process.env['ALPHA_VANTAGE_API_KEY']) {
         try {
-          this.technicalService = new TechnicalAnalysisService(process.env.ALPHA_VANTAGE_API_KEY);
+          this.technicalService = new TechnicalAnalysisService(process.env['ALPHA_VANTAGE_API_KEY']);
           this.logger.info('✅ Technical Analysis service initialized with real AlphaVantage API');
         } catch (error) {
           this.logger.error('❌ Technical Analysis service initialization failed:', error);
@@ -125,13 +125,13 @@ export class MCPOracleServer {
       }
 
       // Initialize AI service for REAL AI analysis (2-model system)
-      if (process.env.GROQ_API_KEY && process.env.OPENAI_API_KEY) {
+      if (process.env['GROQ_API_KEY'] && process.env['OPENAI_API_KEY']) {
         try {
           this.aiService = new AIService(
-            process.env.GROQ_API_KEY,
-            process.env.OPENAI_API_KEY,
-            process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-            process.env.OPENAI_MODEL || 'gpt-5-nano'
+            process.env['GROQ_API_KEY'],
+            process.env['OPENAI_API_KEY'],
+            process.env['GROQ_MODEL'] || 'openai/gpt-oss-120b',
+            process.env['OPENAI_MODEL'] || 'gpt-4o-mini'
           );
           this.logger.info('✅ AI service initialized with 2-model system (Groq + OpenAI)');
         } catch (error) {
@@ -152,14 +152,6 @@ export class MCPOracleServer {
         this.memoryLayer = undefined;
       }
 
-      // Initialize cache service
-      try {
-        this.cache = new CacheService(this.config.cache.redis_url, this.config.cache.ttl);
-        this.logger.info('✅ Redis cache service initialized');
-      } catch (error) {
-        this.logger.error('❌ Redis cache service initialization failed:', error);
-        this.cache = undefined;
-      }
 
       this.logger.info('🎉 ALL REAL API services initialized successfully - NO MORE MOCK DATA!');
     } catch (error) {
@@ -827,7 +819,12 @@ export class MCPOracleServer {
   }
 
   private buildNewsAnalysisResponse(params: any, newsData: any[], analysis: any, aiAnalysis: any): string {
-    const { sentiment, marketImpact, keyHeadlines, totalArticles, sourceBreakdown } = analysis;
+    // Safely destructure with fallbacks to prevent undefined errors
+    const sentiment = analysis?.sentiment || { overall: 0, credibility: 0 };
+    const marketImpact = analysis?.marketImpact || {};
+    const keyHeadlines = analysis?.keyHeadlines || [];
+    const totalArticles = analysis?.totalArticles || 0;
+    const sourceBreakdown = analysis?.sourceBreakdown || {};
 
     return `# 📰 REAL Financial News Analysis
 
@@ -1003,6 +1000,12 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
 
     this.logger.info(`📈 Generating REAL forecast for ${symbol} using ${historicalData.length} historical points`);
 
+    // Validate historical data and provide fallback
+    if (!Array.isArray(historicalData) || historicalData.length === 0) {
+      this.logger.warn(`⚠️ No historical data available for ${symbol}, using current price only`);
+      return this.generateFallbackForecast(symbol, currentPrice, days, technicalAnalysis, aiAnalysis);
+    }
+
     // Calculate multiple trend indicators
     const trends = this.calculateMultipleTimeframeTrends(historicalData);
     const volatility = this.calculateRealVolatility(historicalData);
@@ -1063,7 +1066,7 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
       factors.push(`🎯 RSI: ${technicalAnalysis.indicators.rsi.toFixed(1)} - ${technicalAnalysis.indicators.rsi > 70 ? 'Overbought' : technicalAnalysis.indicators.rsi < 30 ? 'Oversold' : 'Neutral'}`);
     }
 
-    factors.push(`📊 Analysis based on ${historicalData.length} real data points`);
+    factors.push(`📊 Analysis based on ${historicalData?.length || 0} real data points`);
     if (aiAnalysis) factors.push(`🤖 AI model insights incorporated`);
 
     // Risk assessment
@@ -1305,388 +1308,13 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
     };
   }
 
-  // Helper methods for real data fetching and analysis
-  private async getMarketData(assets: string[]): Promise<any[]> {
-    if (!this.coinGecko) {
-      throw new Error('CoinGecko service not initialized');
-    }
 
-    // Try cache first
-    if (this.cache) {
-      const cached = await this.cache.getCachedMarketData(assets);
-      if (cached) {
-        this.logger.debug('📈 Using cached market data');
-        return cached;
-      }
-    }
 
-    try {
-      const data = await this.coinGecko.getDetailedMarketData(assets);
 
-      // Cache the result
-      if (this.cache && data.length > 0) {
-        await this.cache.setCachedMarketData(assets, data, 300); // 5 min cache
-      }
 
-      return data;
-    } catch (error) {
-      this.logger.warn('⚠️ CoinGecko API failed, using fallback');
-      return [];
-    }
-  }
 
-  private async getCurrentPrice(symbol: string): Promise<number | null> {
-    // Try cache first
-    if (this.cache) {
-      const cached = await this.cache.getCachedPrice(symbol);
-      if (cached) {
-        this.logger.debug(`💰 Using cached price for ${symbol}`);
-        return cached;
-      }
-    }
 
-    try {
-      let price: number | null = null;
 
-      if (this.coinGecko) {
-        const marketData = await this.coinGecko.getCurrentPrices([symbol]);
-        price = marketData[0]?.price || null;
-      } else if (this.technicalService) {
-        // Use SMA as price approximation when no other source available
-        const analysis = await this.technicalService.getComprehensiveAnalysis(symbol);
-        price = analysis.indicators.sma_20 || null;
-      }
-
-      // Cache the result
-      if (this.cache && price !== null) {
-        await this.cache.setCachedPrice(symbol, price, 60); // 1 min cache for prices
-      }
-
-      return price;
-    } catch (error) {
-      this.logger.warn(`⚠️ Failed to get current price for ${symbol}:`, error);
-    }
-    return null;
-  }
-
-  private async getHistoricalPriceData(symbol: string): Promise<any[]> {
-    try {
-      if (this.coinGecko) {
-        return await this.coinGecko.getPriceHistory(symbol, 30);
-      }
-    } catch (error) {
-      this.logger.warn(`⚠️ Failed to get historical data for ${symbol}:`, error);
-    }
-    return [];
-  }
-
-  private generateForecast(symbol: string, currentPrice: number | null, historicalData: any[], technicalData: any, days: number): any {
-    if (!currentPrice) {
-      return {
-        confidence: 20,
-        targetPrice: null,
-        priceChange: 'N/A',
-        supportLevel: null,
-        resistanceLevel: null,
-        factors: ['⚠️ Insufficient price data available'],
-        riskLevel: 'High',
-        volatility: 'N/A',
-        recommendation: 'WAIT - Need more data',
-        historicalPattern: 'Unable to analyze patterns without sufficient data'
-      };
-    }
-
-    // Enhanced forecast calculation using multiple timeframes and indicators
-    let shortTermTrend = 0;
-    let mediumTermTrend = 0;
-    let longTermTrend = 0;
-    let volatilityFactor = 0;
-
-    if (historicalData.length > 30) {
-      // Short-term trend (7 days)
-      const recentPrices = historicalData.slice(0, 7).map(d => d.close || d.price || d.current_price);
-      if (recentPrices.length >= 2) {
-        shortTermTrend = (recentPrices[0] - recentPrices[recentPrices.length - 1]) / recentPrices[recentPrices.length - 1];
-      }
-
-      // Medium-term trend (14 days)
-      const mediumPrices = historicalData.slice(0, 14).map(d => d.close || d.price || d.current_price);
-      if (mediumPrices.length >= 2) {
-        mediumTermTrend = (mediumPrices[0] - mediumPrices[mediumPrices.length - 1]) / mediumPrices[mediumPrices.length - 1];
-      }
-
-      // Long-term trend (30 days)
-      const longPrices = historicalData.slice(0, 30).map(d => d.close || d.price || d.current_price);
-      if (longPrices.length >= 2) {
-        longTermTrend = (longPrices[0] - longPrices[longPrices.length - 1]) / longPrices[longPrices.length - 1];
-      }
-
-      // Calculate volatility
-      const dailyReturns = [];
-      for (let i = 1; i < Math.min(recentPrices.length, 14); i++) {
-        const dailyReturn = (recentPrices[i - 1] - recentPrices[i]) / recentPrices[i];
-        dailyReturns.push(dailyReturn);
-      }
-      if (dailyReturns.length > 0) {
-        const avgReturn = dailyReturns.reduce((sum, ret) => sum + ret, 0) / dailyReturns.length;
-        const variance = dailyReturns.reduce((sum, ret) => sum + Math.pow(ret - avgReturn, 2), 0) / dailyReturns.length;
-        volatilityFactor = Math.sqrt(variance) * Math.sqrt(365); // Annualized volatility
-      }
-    } else if (historicalData.length > 7) {
-      // Fallback for limited data
-      const prices = historicalData.slice(0, 7).map(d => d.close || d.price || d.current_price);
-      if (prices.length >= 2) {
-        shortTermTrend = (prices[0] - prices[prices.length - 1]) / prices[prices.length - 1];
-      }
-    }
-
-    // Weighted trend combination (favor recent data)
-    const combinedTrend = (shortTermTrend * 0.5) + (mediumTermTrend * 0.3) + (longTermTrend * 0.2);
-
-    // Apply momentum and technical analysis
-    let momentumAdjustment = 1;
-    if (technicalData.indicators) {
-      // RSI adjustment
-      if (technicalData.indicators.rsi) {
-        if (technicalData.indicators.rsi > 70) momentumAdjustment *= 0.8; // Overbought
-        if (technicalData.indicators.rsi < 30) momentumAdjustment *= 1.2; // Oversold
-      }
-    }
-
-    // Calculate forecast based on combined analysis
-    const forecastMultiplier = 1 + (combinedTrend * momentumAdjustment * Math.min(days / 7, 2));
-    const targetPrice = currentPrice * forecastMultiplier;
-    const priceChange = ((targetPrice - currentPrice) / currentPrice) * 100;
-
-    // Enhanced support and resistance calculation
-    let supportLevel = currentPrice * 0.95;
-    let resistanceLevel = currentPrice * 1.05;
-
-    if (technicalData.support_levels?.length > 0) {
-      supportLevel = technicalData.support_levels[0];
-    } else if (historicalData.length > 14) {
-      // Calculate support from recent lows
-      const recentLows = historicalData.slice(0, 14).map(d => d.low || d.price || d.current_price);
-      supportLevel = Math.min(...recentLows);
-    }
-
-    if (technicalData.resistance_levels?.length > 0) {
-      resistanceLevel = technicalData.resistance_levels[0];
-    } else if (historicalData.length > 14) {
-      // Calculate resistance from recent highs
-      const recentHighs = historicalData.slice(0, 14).map(d => d.high || d.price || d.current_price);
-      resistanceLevel = Math.max(...recentHighs);
-    }
-
-    // Generate enhanced factors based on real analysis
-    const factors = [];
-    if (shortTermTrend > 0.05) factors.push('✅ Strong short-term upward momentum (+5%+)');
-    else if (shortTermTrend < -0.05) factors.push('⚠️ Strong short-term downward pressure (-5%+)');
-    else factors.push('📊 Short-term consolidation pattern');
-
-    if (mediumTermTrend > 0.1) factors.push('🚀 Medium-term bullish trend established');
-    else if (mediumTermTrend < -0.1) factors.push('📉 Medium-term bearish trend confirmed');
-
-    if (volatilityFactor > 0.5) factors.push('⚡ High volatility environment detected');
-    else if (volatilityFactor < 0.2) factors.push('😴 Low volatility consolidation phase');
-
-    factors.push(`📈 ${historicalData.length} data points analyzed`);
-    factors.push('🤖 Multi-timeframe technical analysis applied');
-
-    // Enhanced confidence calculation
-    let confidence = 50;
-    confidence += Math.min(historicalData.length, 30); // More data = higher confidence
-    confidence += Math.max(0, 20 - (volatilityFactor * 40)); // Lower volatility = higher confidence
-    if (technicalData.indicators?.rsi) confidence += 5; // Technical indicators boost confidence
-    if (Math.abs(combinedTrend) > 0.1) confidence += 10; // Strong trends boost confidence
-
-    return {
-      confidence: Math.min(95, Math.max(25, Math.round(confidence))),
-      targetPrice: Math.round(targetPrice * 100) / 100, // Round to 2 decimals
-      priceChange: priceChange.toFixed(1),
-      supportLevel: Math.round(supportLevel * 100) / 100,
-      resistanceLevel: Math.round(resistanceLevel * 100) / 100,
-      factors,
-      riskLevel: volatilityFactor > 0.4 ? 'High' : volatilityFactor > 0.2 ? 'Medium' : 'Low',
-      volatility: (volatilityFactor * 100).toFixed(1),
-      recommendation: priceChange > 8 ? 'STRONG BUY' : priceChange > 3 ? 'BUY' : priceChange < -8 ? 'STRONG SELL' : priceChange < -3 ? 'SELL' : 'HOLD',
-      historicalPattern: `Multi-timeframe analysis of ${historicalData.length} data points reveals ${combinedTrend > 0.05 ? 'bullish' : combinedTrend < -0.05 ? 'bearish' : 'neutral'} ${days}-day outlook with ${volatilityFactor > 0.3 ? 'elevated' : 'normal'} volatility`
-    };
-  }
-
-  private async getNewsData(assets: string[]): Promise<any[]> {
-    // Try cache first
-    if (this.cache) {
-      const cached = await this.cache.getCachedNews(assets, 24);
-      if (cached) {
-        this.logger.debug('📰 Using cached news data');
-        return cached;
-      }
-    }
-
-    const allNews: any[] = [];
-    let newsAPISuccess = false;
-    let cryptoPanicSuccess = false;
-
-    // Get news from NewsService
-    if (this.newsService) {
-      try {
-        this.logger.info('🔍 Fetching real news from NewsAPI for assets:', assets);
-        const financialNews = await this.newsService.getFinancialNews(assets, 24, 20);
-        if (financialNews && financialNews.length > 0) {
-          allNews.push(...financialNews);
-          newsAPISuccess = true;
-          this.logger.info(`✅ NewsAPI returned ${financialNews.length} articles`);
-        } else {
-          this.logger.warn('⚠️ NewsAPI returned no articles');
-        }
-      } catch (error) {
-        this.logger.error('❌ NewsAPI failed:', error);
-        // Try crypto news as fallback
-        try {
-          const cryptoNews = await this.newsService.getCryptoNews(assets, 24, 15);
-          if (cryptoNews && cryptoNews.length > 0) {
-            allNews.push(...cryptoNews);
-            newsAPISuccess = true;
-            this.logger.info(`✅ NewsAPI crypto fallback returned ${cryptoNews.length} articles`);
-          }
-        } catch (cryptoError) {
-          this.logger.error('❌ NewsAPI crypto fallback also failed:', cryptoError);
-        }
-      }
-    } else {
-      this.logger.warn('⚠️ NewsAPI service not initialized - check NEWSAPI_KEY environment variable');
-    }
-
-    // Get additional crypto news from the same service
-    if (this.newsService) {
-      try {
-        const cryptoNews = await this.newsService.getCryptoNews(assets);
-        if (cryptoNews && cryptoNews.length > 0) {
-          allNews.push(...cryptoNews);
-          cryptoPanicSuccess = true;
-          this.logger.info(`✅ CryptoPanic returned ${cryptoNews.length} articles`);
-        }
-      } catch (error) {
-        this.logger.error('❌ CryptoPanic failed:', error);
-      }
-    }
-
-    // Log overall success/failure
-    if (!newsAPISuccess && !cryptoPanicSuccess) {
-      this.logger.error('❌ All news sources failed to return data');
-      // Return mock data to demonstrate the issue when APIs fail
-      return this.getMockNewsData(assets);
-    }
-
-    const sortedNews = allNews.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-    // Cache the result
-    if (this.cache && sortedNews.length > 0) {
-      await this.cache.setCachedNews(assets, 24, sortedNews, 1800); // 30 min cache
-    }
-
-    this.logger.info(`📰 Total news articles collected: ${sortedNews.length}`);
-    return sortedNews;
-  }
-
-  private getMockNewsData(assets: string[]): any[] {
-    // Fallback mock data when all news APIs fail
-    const now = new Date();
-    return assets.map((asset, index) => ({
-      title: `${asset} Market Analysis: API Connection Failed`,
-      content: `Unable to fetch real news for ${asset}. This is mock data indicating API issues.`,
-      source: 'MCP Oracle System',
-      url: 'https://example.com',
-      timestamp: new Date(now.getTime() - (index * 60 * 60 * 1000)).toISOString(),
-      sentiment_score: 0,
-      relevance_score: 0.1
-    }));
-  }
-
-  private async getSentimentData(assets: string[]): Promise<any[]> {
-    // Try cache first
-    if (this.cache) {
-      const cached = await this.cache.getCachedSentiment(assets);
-      if (cached) {
-        this.logger.debug('😊 Using cached sentiment data');
-        return cached;
-      }
-    }
-
-    try {
-      if (this.newsService) {
-        // Use news aggregation for sentiment analysis since getSentimentAnalysis doesn't exist
-        const newsData = await this.newsService.getAggregatedNews(assets, 24);
-        const sentimentData = this.calculateSentimentFromNews(newsData);
-
-        // Cache the result
-        if (this.cache && sentimentData.length > 0) {
-          await this.cache.setCachedSentiment(assets, sentimentData, 900); // 15 min cache
-        }
-
-        return sentimentData;
-      }
-    } catch (error) {
-      this.logger.warn('⚠️ Sentiment analysis failed:', error);
-    }
-    return [];
-  }
-
-  private async getTechnicalData(assets: string[]): Promise<any> {
-    if (assets.length === 0) {
-      return {
-        trend: 'No assets specified',
-        support_levels: [],
-        resistance_levels: [],
-        indicators: {}
-      };
-    }
-
-    const mainAsset = assets[0];
-
-    // Try cache first
-    if (this.cache) {
-      const cached = await this.cache.getCachedTechnicalData(mainAsset);
-      if (cached) {
-        this.logger.debug(`📊 Using cached technical data for ${mainAsset}`);
-        return cached;
-      }
-    }
-
-    const technicalData: any = {
-      trend: 'Mixed signals across assets',
-      support_levels: [],
-      resistance_levels: [],
-      indicators: {}
-    };
-
-    try {
-      if (this.technicalService) {
-        const analysis = await this.technicalService.getComprehensiveAnalysis(mainAsset);
-        const indicators = analysis.indicators;
-        const supportResistance = analysis.support_resistance;
-
-        technicalData.indicators = {
-          rsi: indicators.rsi,
-          macd: `${indicators.macd.value > 0 ? 'Bullish' : 'Bearish'} crossover`,
-          bollinger_position: this.getBollingerPosition(indicators.bollinger_bands)
-        };
-        technicalData.support_levels = supportResistance.support_levels;
-        technicalData.resistance_levels = supportResistance.resistance_levels;
-        technicalData.trend = this.calculateTrend(indicators);
-
-        // Cache the result
-        if (this.cache) {
-          await this.cache.setCachedTechnicalData(mainAsset, technicalData, 600); // 10 min cache
-        }
-      }
-    } catch (error) {
-      this.logger.warn('⚠️ Technical analysis failed:', error);
-    }
-
-    return technicalData;
-  }
 
   // Market analysis helper methods
   private calculateSentimentFromNews(newsData: any[]): any[] {
@@ -1732,8 +1360,62 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
 
   // News analysis helper methods
 
+  /**
+   * Generate fallback forecast when historical data is unavailable
+   */
+  private generateFallbackForecast(
+    symbol: string,
+    currentPrice: number,
+    days: number,
+    technicalAnalysis: any,
+    aiAnalysis: any
+  ): any {
+    this.logger.info(`📉 Generating fallback forecast for ${symbol} with limited data`);
 
+    // Use basic technical analysis if available
+    let confidence = 40; // Lower confidence due to limited data
+    let priceChange = 0;
 
+    if (technicalAnalysis) {
+      // Use technical signals for basic prediction
+      const trend = technicalAnalysis.trend_analysis?.overall || 'neutral';
+      const strength = technicalAnalysis.trend_analysis?.strength || 50;
+
+      if (trend === 'bullish') {
+        priceChange = (strength / 100) * 5; // Max 5% positive
+        confidence += 15;
+      } else if (trend === 'bearish') {
+        priceChange = -(strength / 100) * 5; // Max 5% negative
+        confidence += 15;
+      }
+    }
+
+    if (aiAnalysis) {
+      confidence += 10;
+    }
+
+    const targetPrice = currentPrice * (1 + priceChange / 100);
+
+    const factors = [
+      '⚠️ Limited historical data available',
+      '📊 Analysis based on current technical indicators only',
+      technicalAnalysis ? '📈 Technical analysis incorporated' : '❌ No technical data available',
+      aiAnalysis ? '🤖 AI insights included' : '❌ No AI analysis available'
+    ].filter(Boolean);
+
+    return {
+      confidence: Math.min(confidence, 60), // Cap at 60% for fallback
+      targetPrice: Math.round(targetPrice * 100) / 100,
+      priceChange: priceChange.toFixed(2),
+      factors,
+      riskLevel: 'High', // Always high risk with limited data
+      volatility: '25.0', // Assume moderate volatility
+      recommendation: 'HOLD', // Conservative recommendation
+      historicalPattern: `Limited data analysis - forecast based on ${technicalAnalysis ? 'technical indicators' : 'current price'} only`,
+      technicalSignal: technicalAnalysis ? `${technicalAnalysis.signals?.action || 'HOLD'} (${technicalAnalysis.signals?.confidence || 40}%)` : 'No technical data',
+      marketRegime: 'Uncertain - Insufficient Data'
+    };
+  }
 
   // Protocol-specific startup methods
   async startStdio(): Promise<void> {
@@ -1786,6 +1468,132 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
         res.status(500).json({
           success: false,
           error: error instanceof Error ? error.message : 'Internal server error'
+        });
+      }
+    });
+
+    // MCP protocol endpoint for JSON-RPC requests
+    this.expressApp.post('/mcp', async (req, res) => {
+      try {
+        const { method, params, id } = req.body;
+
+        let response: any;
+
+        switch (method) {
+          case 'tools/list':
+            response = {
+              tools: [
+                {
+                  name: "getSmartMarketPulse",
+                  description: "Comprehensive multi-asset market analysis with AI-powered insights",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      assets: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "List of assets to analyze"
+                      },
+                      timeframe: {
+                        type: "string",
+                        enum: ["last_4_hours", "last_24_hours", "last_week"],
+                        description: "Analysis period"
+                      },
+                      analysis_depth: {
+                        type: "string",
+                        enum: ["quick", "standard", "comprehensive"],
+                        description: "AI analysis level"
+                      }
+                    },
+                    required: ["assets"]
+                  }
+                },
+                {
+                  name: "analyzeFinancialNews",
+                  description: "Analyze recent financial news and its market impact",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      symbols: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Symbols to get news for"
+                      },
+                      hours: {
+                        type: "number",
+                        description: "Hours of news to analyze",
+                        default: 24
+                      }
+                    },
+                    required: ["symbols"]
+                  }
+                },
+                {
+                  name: "getMarketForecast",
+                  description: "Generate AI-powered market forecast based on historical patterns",
+                  inputSchema: {
+                    type: "object",
+                    properties: {
+                      symbol: {
+                        type: "string",
+                        description: "Asset symbol to forecast"
+                      },
+                      days: {
+                        type: "number",
+                        description: "Forecast horizon in days",
+                        default: 7
+                      }
+                    },
+                    required: ["symbol"]
+                  }
+                }
+              ]
+            };
+            break;
+
+          case 'tools/call':
+            const { name, arguments: args } = params;
+            let toolResult: MCPToolResponse;
+
+            switch (name) {
+              case 'getSmartMarketPulse':
+                toolResult = await this.handleGetSmartMarketPulse(args);
+                break;
+              case 'analyzeFinancialNews':
+                toolResult = await this.handleAnalyzeFinancialNews(args);
+                break;
+              case 'getMarketForecast':
+                toolResult = await this.handleGetMarketForecast(args);
+                break;
+              default:
+                throw new Error(`Unknown tool: ${name}`);
+            }
+
+            response = {
+              content: toolResult.content,
+              isError: toolResult.isError || false
+            };
+            break;
+
+          default:
+            throw new Error(`Unknown method: ${method}`);
+        }
+
+        res.json({
+          jsonrpc: "2.0",
+          id: id || null,
+          result: response
+        });
+
+      } catch (error) {
+        this.logger.error('MCP protocol error:', error);
+        res.status(500).json({
+          jsonrpc: "2.0",
+          id: req.body.id || null,
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : 'Internal error'
+          }
         });
       }
     });

@@ -1,62 +1,87 @@
+// Third-party packages
 import axios, { AxiosInstance } from 'axios';
+
+// Local imports
+import type {
+  AIAnalysisRequest,
+  AIAnalysisResponse,
+  AssetSymbol,
+  AnalysisDepth,
+  ConfidenceScore,
+  Timestamp,
+  Result,
+  APIError,
+  createSuccess,
+  createError,
+  createTimestamp,
+  createConfidenceScore
+} from '../types/index.js';
 import { loggers } from '../utils/logger.js';
 
-export interface AIAnalysisRequest {
-  type: 'market_pulse' | 'news_analysis' | 'forecast' | 'sentiment' | 'technical';
-  data: any;
-  symbols: string[];
-  context?: string;
-  depth: 'quick' | 'standard' | 'comprehensive';
+// Specific data types for different analysis requests
+export interface MarketPulseData {
+  readonly marketData: readonly unknown[];
+  readonly newsData: readonly unknown[];
+  readonly technicalData: Record<string, unknown>;
+  readonly sentimentData?: readonly unknown[];
 }
 
-export interface AIAnalysisResponse {
-  analysis: string;
-  insights: string[];
-  recommendations: string[];
-  confidence: number;
-  reasoning: string[];
-  model_used: string;
-  timestamp: string;
+export interface NewsSentimentData {
+  readonly articles: readonly {
+    readonly title: string;
+    readonly content: string;
+    readonly source: string;
+    readonly timestamp: Timestamp;
+    readonly sentiment_score?: number;
+  }[];
 }
 
-export interface GroqResponse {
-  id: string;
-  object: string;
-  created: number;
-  model: string;
-  choices: Array<{
-    index: number;
-    message: {
-      role: string;
-      content: string;
-    };
-    finish_reason: string;
-  }>;
-  usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
+export interface ForecastData {
+  readonly currentPrice: number;
+  readonly historicalData: readonly {
+    readonly price: number;
+    readonly timestamp: Timestamp;
+    readonly volume?: number;
+  }[];
+  readonly technicalData?: Record<string, unknown>;
+  readonly fundamentals: {
+    readonly symbol: AssetSymbol;
+    readonly timeframe: number;
   };
 }
 
-export interface OpenAIResponse {
-  id: string;
-  object: string;
-  created: number;
-  model: string;
-  choices: Array<{
-    index: number;
-    message: {
-      role: string;
-      content: string;
+export interface TechnicalAnalysisData {
+  readonly indicators: Record<string, unknown>;
+  readonly patterns: readonly unknown[];
+  readonly signals: readonly unknown[];
+}
+
+// Unified AI API response interface (both Groq and OpenAI have same structure)
+export interface AIAPIResponse {
+  readonly id: string;
+  readonly object: string;
+  readonly created: number;
+  readonly model: string;
+  readonly choices: readonly {
+    readonly index: number;
+    readonly message: {
+      readonly role: 'system' | 'user' | 'assistant';
+      readonly content: string;
     };
-    finish_reason: string;
-  }>;
-  usage: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
+    readonly finish_reason: 'stop' | 'length' | 'function_call' | 'content_filter' | null;
+  }[];
+  readonly usage: {
+    readonly prompt_tokens: number;
+    readonly completion_tokens: number;
+    readonly total_tokens: number;
   };
+}
+
+// Internal response wrapper
+export interface AIServiceResponse {
+  readonly content: string;
+  readonly model: string;
+  readonly tokensUsed: number;
 }
 
 export class AIService {
@@ -158,13 +183,15 @@ export class AIService {
   /**
    * Analyze market data with AI
    */
-  async analyzeMarketPulse(request: AIAnalysisRequest): Promise<AIAnalysisResponse> {
+  async analyzeMarketPulse(
+    request: AIAnalysisRequest & { data: MarketPulseData }
+  ): Promise<Result<AIAnalysisResponse, APIError>> {
     this.logger.info(`🔍 Analyzing market pulse for ${request.symbols.join(', ')} with ${request.depth} depth`);
 
     const prompt = this.buildMarketPulsePrompt(request);
 
     try {
-      let response: any;
+      let response: AIServiceResponse;
 
       if (request.depth === 'quick') {
         response = await this.callGroq(prompt);
@@ -184,31 +211,43 @@ export class AIService {
 
       this.logger.info(`✅ Market pulse analysis completed using ${response.model}`);
 
-      return {
+      const result: AIAnalysisResponse = {
         analysis: analysis.summary,
         insights: analysis.insights,
         recommendations: analysis.recommendations,
-        confidence: analysis.confidence,
+        confidence: createConfidenceScore(analysis.confidence),
         reasoning: analysis.reasoning,
         model_used: response.model,
-        timestamp: new Date().toISOString()
+        timestamp: createTimestamp(new Date().toISOString())
       };
+
+      return createSuccess(result);
     } catch (error) {
       this.logger.error('❌ Market pulse analysis failed:', error);
-      throw new Error('AI market analysis failed');
+      const apiError: APIError = {
+        type: 'api_error',
+        code: 'AI_ANALYSIS_FAILED',
+        message: error instanceof Error ? error.message : 'AI market analysis failed',
+        timestamp: createTimestamp(new Date().toISOString()),
+        service: 'ai-service',
+        retryable: true
+      };
+      return createError(apiError);
     }
   }
 
   /**
    * Analyze news sentiment with AI
    */
-  async analyzeNewsSentiment(request: AIAnalysisRequest): Promise<AIAnalysisResponse> {
+  async analyzeNewsSentiment(
+    request: AIAnalysisRequest & { data: NewsSentimentData }
+  ): Promise<Result<AIAnalysisResponse, APIError>> {
     this.logger.info(`📰 Analyzing news sentiment for ${request.symbols.join(', ')}`);
 
     const prompt = this.buildNewsSentimentPrompt(request);
 
     try {
-      let response: any;
+      let response: AIServiceResponse;
 
       if (request.depth === 'comprehensive') {
         response = await this.callOpenAI(prompt, this.openaiComprehensiveModel);
@@ -226,31 +265,43 @@ export class AIService {
 
       this.logger.info(`✅ News sentiment analysis completed using ${response.model}`);
 
-      return {
+      const result: AIAnalysisResponse = {
         analysis: analysis.summary,
         insights: analysis.insights,
         recommendations: analysis.recommendations,
-        confidence: analysis.confidence,
+        confidence: createConfidenceScore(analysis.confidence),
         reasoning: analysis.reasoning,
         model_used: response.model,
-        timestamp: new Date().toISOString()
+        timestamp: createTimestamp(new Date().toISOString())
       };
+
+      return createSuccess(result);
     } catch (error) {
       this.logger.error('❌ News sentiment analysis failed:', error);
-      throw new Error('AI news analysis failed');
+      const apiError: APIError = {
+        type: 'api_error',
+        code: 'AI_NEWS_ANALYSIS_FAILED',
+        message: error instanceof Error ? error.message : 'AI news analysis failed',
+        timestamp: createTimestamp(new Date().toISOString()),
+        service: 'ai-service',
+        retryable: true
+      };
+      return createError(apiError);
     }
   }
 
   /**
    * Generate market forecast with AI
    */
-  async generateForecast(request: AIAnalysisRequest): Promise<AIAnalysisResponse> {
+  async generateForecast(
+    request: AIAnalysisRequest & { data: ForecastData }
+  ): Promise<Result<AIAnalysisResponse, APIError>> {
     this.logger.info(`🔮 Generating forecast for ${request.symbols.join(', ')}`);
 
     const prompt = this.buildForecastPrompt(request);
 
     try {
-      let response: any;
+      let response: AIServiceResponse;
 
       // Use most capable model for forecasting based on depth
       if (request.depth === 'comprehensive') {
@@ -264,31 +315,43 @@ export class AIService {
 
       this.logger.info(`✅ Forecast generated using ${response.model}`);
 
-      return {
+      const result: AIAnalysisResponse = {
         analysis: analysis.summary,
         insights: analysis.insights,
         recommendations: analysis.recommendations,
-        confidence: analysis.confidence,
+        confidence: createConfidenceScore(analysis.confidence),
         reasoning: analysis.reasoning,
         model_used: response.model,
-        timestamp: new Date().toISOString()
+        timestamp: createTimestamp(new Date().toISOString())
       };
+
+      return createSuccess(result);
     } catch (error) {
       this.logger.error('❌ Forecast generation failed:', error);
-      throw new Error('AI forecast generation failed');
+      const apiError: APIError = {
+        type: 'api_error',
+        code: 'AI_FORECAST_FAILED',
+        message: error instanceof Error ? error.message : 'AI forecast generation failed',
+        timestamp: createTimestamp(new Date().toISOString()),
+        service: 'ai-service',
+        retryable: true
+      };
+      return createError(apiError);
     }
   }
 
   /**
    * Analyze technical indicators with AI
    */
-  async analyzeTechnical(request: AIAnalysisRequest): Promise<AIAnalysisResponse> {
+  async analyzeTechnical(
+    request: AIAnalysisRequest & { data: TechnicalAnalysisData }
+  ): Promise<Result<AIAnalysisResponse, APIError>> {
     this.logger.info(`📊 Analyzing technical data for ${request.symbols.join(', ')}`);
 
     const prompt = this.buildTechnicalPrompt(request);
 
     try {
-      const response = request.depth === 'quick'
+      const response: AIServiceResponse = request.depth === 'quick'
         ? await this.callGroq(prompt)
         : await this.callOpenAI(prompt);
 
@@ -296,25 +359,35 @@ export class AIService {
 
       this.logger.info(`✅ Technical analysis completed using ${response.model}`);
 
-      return {
+      const result: AIAnalysisResponse = {
         analysis: analysis.summary,
         insights: analysis.insights,
         recommendations: analysis.recommendations,
-        confidence: analysis.confidence,
+        confidence: createConfidenceScore(analysis.confidence),
         reasoning: analysis.reasoning,
         model_used: response.model,
-        timestamp: new Date().toISOString()
+        timestamp: createTimestamp(new Date().toISOString())
       };
+
+      return createSuccess(result);
     } catch (error) {
       this.logger.error('❌ Technical analysis failed:', error);
-      throw new Error('AI technical analysis failed');
+      const apiError: APIError = {
+        type: 'api_error',
+        code: 'AI_TECHNICAL_ANALYSIS_FAILED',
+        message: error instanceof Error ? error.message : 'AI technical analysis failed',
+        timestamp: createTimestamp(new Date().toISOString()),
+        service: 'ai-service',
+        retryable: true
+      };
+      return createError(apiError);
     }
   }
 
-  private async callGroq(prompt: string): Promise<{ content: string; model: string }> {
+  private async callGroq(prompt: string): Promise<AIServiceResponse> {
     this.logger.debug('🚀 Calling GROQ for analysis');
 
-    const response = await this.groqClient.post<GroqResponse>('/chat/completions', {
+    const response = await this.groqClient.post<AIAPIResponse>('/chat/completions', {
       model: this.groqModel,
       messages: [
         {
@@ -333,11 +406,12 @@ export class AIService {
 
     return {
       content: response.data.choices[0].message.content,
-      model: `GROQ ${response.data.model}`
+      model: `GROQ ${response.data.model}`,
+      tokensUsed: response.data.usage.total_tokens
     };
   }
 
-  private async callOpenAI(prompt: string, model?: string): Promise<{ content: string; model: string }> {
+  private async callOpenAI(prompt: string, model?: string): Promise<AIServiceResponse> {
     const modelToUse = model || this.openaiModel;
     const maxTokens = modelToUse === this.openaiComprehensiveModel ? 8000 :
                      modelToUse === this.openaiModel ? 4000 : 3000;
@@ -345,7 +419,7 @@ export class AIService {
 
     this.logger.debug(`🧠 Calling OpenAI ${modelToUse} for analysis`);
 
-    const response = await this.openaiClient.post<OpenAIResponse>('/chat/completions', {
+    const response = await this.openaiClient.post<AIAPIResponse>('/chat/completions', {
       model: modelToUse,
       messages: [
         {
@@ -357,14 +431,15 @@ export class AIService {
           content: prompt
         }
       ],
-      max_tokens: maxTokens,
+      max_completion_tokens: maxTokens,
       temperature,
       top_p: 0.8
     });
 
     return {
       content: response.data.choices[0].message.content,
-      model: `OpenAI ${response.data.model}`
+      model: `OpenAI ${response.data.model}`,
+      tokensUsed: response.data.usage.total_tokens
     };
   }
 
@@ -464,7 +539,7 @@ Focus on:
     return `Analyze the technical indicators for ${symbols.join(', ')}:
 
 TECHNICAL INDICATORS:
-${JSON.stringify(data, null, 2)}
+${this.formatTechnicalData(data)}
 
 Please provide comprehensive technical analysis in the following JSON format:
 {
@@ -551,7 +626,7 @@ Focus on:
       await this.openaiClient.post('/chat/completions', {
         model: this.openaiModel,
         messages: [{ role: 'user', content: 'Hello' }],
-        max_tokens: 10
+        max_completion_tokens: 10
       });
 
       this.logger.info('✅ AI service health check passed');
@@ -560,5 +635,129 @@ Focus on:
       this.logger.error('❌ AI service health check failed:', error);
       return false;
     }
+  }
+
+  /**
+   * Format technical data to prevent [object Object] serialization issues
+   */
+  private formatTechnicalData(data: any): string {
+    if (!data) return 'No technical data available';
+
+    try {
+      // Handle different data structures that might come in
+      if (Array.isArray(data)) {
+        return data.map((item, index) => this.formatTechnicalItem(item, index)).join('\n\n');
+      } else if (typeof data === 'object') {
+        return this.formatTechnicalItem(data);
+      } else {
+        return String(data);
+      }
+    } catch (error) {
+      this.logger.warn('Error formatting technical data:', error);
+      return 'Technical data formatting error';
+    }
+  }
+
+  /**
+   * Format individual technical data item
+   */
+  private formatTechnicalItem(item: any, index?: number): string {
+    if (!item || typeof item !== 'object') {
+      return `Item ${index ?? ''}: ${String(item)}`;
+    }
+
+    const lines: string[] = [];
+
+    if (index !== undefined) {
+      lines.push(`=== Technical Analysis ${index + 1} ===`);
+    }
+
+    // Handle technical indicators specifically
+    if (item.indicators) {
+      lines.push('INDICATORS:');
+      const indicators = item.indicators;
+
+      if (typeof indicators.rsi === 'number') {
+        lines.push(`  RSI (14): ${indicators.rsi.toFixed(2)}`);
+      }
+
+      if (indicators.macd && typeof indicators.macd === 'object') {
+        lines.push(`  MACD: ${indicators.macd.trend || 'neutral'} (${indicators.macd.value?.toFixed(4) || 'N/A'})`);
+      }
+
+      if (indicators.bollinger_bands && typeof indicators.bollinger_bands === 'object') {
+        const bb = indicators.bollinger_bands;
+        lines.push(`  Bollinger Bands: ${bb.position || 'unknown'} (Upper: ${bb.upper?.toFixed(2) || 'N/A'}, Lower: ${bb.lower?.toFixed(2) || 'N/A'})`);
+      }
+
+      if (typeof indicators.sma_20 === 'number') {
+        lines.push(`  SMA 20: ${indicators.sma_20.toFixed(2)}`);
+      }
+
+      if (typeof indicators.sma_50 === 'number') {
+        lines.push(`  SMA 50: ${indicators.sma_50.toFixed(2)}`);
+      }
+
+      if (typeof indicators.sma_200 === 'number') {
+        lines.push(`  SMA 200: ${indicators.sma_200.toFixed(2)}`);
+      }
+
+      if (typeof indicators.volume === 'number') {
+        lines.push(`  Avg Volume: ${indicators.volume.toLocaleString()}`);
+      }
+
+      if (typeof indicators.volatility === 'number') {
+        lines.push(`  Volatility: ${indicators.volatility.toFixed(2)}%`);
+      }
+    }
+
+    // Handle support/resistance
+    if (item.support_resistance) {
+      lines.push('SUPPORT/RESISTANCE:');
+      const sr = item.support_resistance;
+      if (Array.isArray(sr.support_levels)) {
+        lines.push(`  Support: ${sr.support_levels.map((s: number) => s.toFixed(2)).join(', ')}`);
+      }
+      if (Array.isArray(sr.resistance_levels)) {
+        lines.push(`  Resistance: ${sr.resistance_levels.map((r: number) => r.toFixed(2)).join(', ')}`);
+      }
+    }
+
+    // Handle trend analysis
+    if (item.trend_analysis) {
+      lines.push('TREND ANALYSIS:');
+      const trend = item.trend_analysis;
+      lines.push(`  Overall: ${trend.overall || 'neutral'} (Strength: ${trend.strength || 0}%)`);
+      lines.push(`  Short-term: ${trend.short_term || 'neutral'}`);
+      lines.push(`  Long-term: ${trend.long_term || 'neutral'}`);
+    }
+
+    // Handle signals
+    if (item.signals) {
+      lines.push('SIGNALS:');
+      const signals = item.signals;
+      lines.push(`  Action: ${signals.action || 'HOLD'} (Confidence: ${signals.confidence || 0}%)`);
+      if (Array.isArray(signals.reasons)) {
+        signals.reasons.forEach((reason: string) => {
+          lines.push(`  - ${reason}`);
+        });
+      }
+    }
+
+    // Handle any other object properties
+    Object.keys(item).forEach(key => {
+      if (!['indicators', 'support_resistance', 'trend_analysis', 'signals'].includes(key)) {
+        const value = item[key];
+        if (value !== null && value !== undefined) {
+          if (typeof value === 'object') {
+            lines.push(`${key.toUpperCase()}: ${JSON.stringify(value, null, 2)}`);
+          } else {
+            lines.push(`${key.toUpperCase()}: ${value}`);
+          }
+        }
+      }
+    });
+
+    return lines.join('\n');
   }
 }

@@ -1,4 +1,7 @@
+// Third-party packages
 import axios, { AxiosInstance } from 'axios';
+
+// Local imports
 import { loggers } from '../utils/logger.js';
 
 export interface NewsArticle {
@@ -51,13 +54,9 @@ export interface CryptoPanicResponse {
 export class NewsService {
   private newsAPIClient: AxiosInstance;
   private cryptoPanicClient: AxiosInstance;
-  private newsAPIKey: string;
-  private cryptoPanicKey: string;
   private logger = loggers.news;
 
   constructor(newsAPIKey: string, cryptoPanicKey: string) {
-    this.newsAPIKey = newsAPIKey;
-    this.cryptoPanicKey = cryptoPanicKey;
 
     // NewsAPI client
     this.newsAPIClient = axios.create({
@@ -258,21 +257,21 @@ export class NewsService {
 
       const allNews: NewsArticle[] = [];
 
-      if (financialNews.status === 'fulfilled') {
+      if (financialNews && financialNews.status === 'fulfilled') {
         allNews.push(...financialNews.value);
-      } else {
+      } else if (financialNews && financialNews.status === 'rejected') {
         this.logger.warn('⚠️ Financial news failed:', financialNews.reason);
       }
 
-      if (cryptoNews.status === 'fulfilled') {
+      if (cryptoNews && cryptoNews.status === 'fulfilled') {
         allNews.push(...cryptoNews.value);
-      } else {
+      } else if (cryptoNews && cryptoNews.status === 'rejected') {
         this.logger.warn('⚠️ Crypto news failed:', cryptoNews.reason);
       }
 
-      if (cryptoPanicNews.status === 'fulfilled') {
+      if (cryptoPanicNews && cryptoPanicNews.status === 'fulfilled') {
         allNews.push(...cryptoPanicNews.value);
-      } else {
+      } else if (cryptoPanicNews && cryptoPanicNews.status === 'rejected') {
         this.logger.warn('⚠️ CryptoPanic news failed:', cryptoPanicNews.reason);
       }
 
@@ -303,7 +302,7 @@ export class NewsService {
     };
   }
 
-  private transformCryptoPanicPost(post: any, symbols: string[], index: number): NewsArticle {
+  private transformCryptoPanicPost(post: any, symbols: string[], _index: number): NewsArticle {
     return {
       id: `cryptopanic_${post.id}`,
       title: post.title,

@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
+// Third-party packages
+import { config } from 'dotenv';
+
+// Local imports
 import { MCPOracleServer } from './server/mcp-server.js';
 import type { ServerConfig } from './types/index.js';
-import { config } from 'dotenv';
 
 // Load environment variables
 config();
@@ -16,8 +19,8 @@ const defaultConfig: ServerConfig = {
     sse: process.argv.includes('--sse')
   },
   ports: {
-    http: parseInt(process.env.PORT || '4006'),
-    websocket: parseInt(process.env.WS_PORT || '4007')
+    http: parseInt(process.env['PORT'] || '4006'),
+    websocket: parseInt(process.env['WS_PORT'] || '4007')
   },
   ai: {
     providers: {
@@ -29,7 +32,7 @@ const defaultConfig: ServerConfig = {
       },
       openai: {
         name: 'openai',
-        model: 'gpt-5-nano',
+        model: 'gpt-4o-mini',
         maxTokens: 4000,
         temperature: 0.7
       }
@@ -41,29 +44,32 @@ const defaultConfig: ServerConfig = {
       endpoint: 'https://cryptopanic.com/api/v1/posts/',
       rateLimit: '1000/day',
       priority: 1,
-      isActive: true
+      isActive: true,
+      timeout: 10000
     },
     coingecko: {
       name: 'CoinGecko',
       endpoint: 'https://api.coingecko.com/api/v3/',
       rateLimit: '10-50/minute',
       priority: 1,
-      isActive: true
+      isActive: true,
+      timeout: 10000
     },
     reddit: {
       name: 'Reddit',
       endpoint: 'https://www.reddit.com/r/cryptocurrency/.json',
       rateLimit: '60/minute',
       priority: 1,
-      isActive: true
+      isActive: true,
+      timeout: 10000
     }
   },
   cache: {
     ttl: 300, // 5 minutes
-    redis_url: process.env.REDIS_URL || 'redis://:password@redis:6379'
+    redis_url: process.env['REDIS_URL'] || 'redis://:password@redis:6379'
   },
   memory: {
-    mongodb_url: process.env.MONGODB_URL || 'mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle',
+    mongodb_url: process.env['MONGODB_URL'] || 'mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle',
     database_name: 'mcp_oracle'
   }
 };
@@ -164,7 +170,7 @@ async function main(): Promise<void> {
 
   // Auto-detect protocol if none specified
   if (!Object.values(config.protocols).some(enabled => enabled)) {
-    if (process.stdin.isTTY && !process.env.CI) {
+    if (process.stdin.isTTY && !process.env['CI']) {
       config.protocols.stdio = true;
     } else {
       config.protocols.http = true;

@@ -1,4 +1,7 @@
+// Third-party packages
 import axios, { AxiosInstance } from 'axios';
+
+// Local imports
 import { loggers } from '../utils/logger.js';
 
 export interface TechnicalIndicators {
@@ -57,12 +60,10 @@ export interface AlphaVantageResponse {
 
 export class TechnicalAnalysisService {
   private client: AxiosInstance;
-  private apiKey: string;
   private baseUrl = 'https://www.alphavantage.co/query';
   private logger = loggers.technical;
 
   constructor(apiKey: string) {
-    this.apiKey = apiKey;
     this.client = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000,
@@ -277,9 +278,9 @@ export class TechnicalAnalysisService {
 
     const responses = await Promise.all(promises);
     return {
-      sma20: responses[0].data,
-      sma50: responses[1].data,
-      sma200: responses[2].data
+      sma20: responses[0]?.data,
+      sma50: responses[1]?.data,
+      sma200: responses[2]?.data
     };
   }
 
@@ -310,8 +311,8 @@ export class TechnicalAnalysisService {
 
     const responses = await Promise.all(promises);
     return {
-      ema12: responses[0].data,
-      ema26: responses[1].data
+      ema12: responses[0]?.data,
+      ema26: responses[1]?.data
     };
   }
 
@@ -604,7 +605,7 @@ export class TechnicalAnalysisService {
 
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await this.client.get('', {
+      const _response = await this.client.get('', {
         params: {
           function: 'TIME_SERIES_INTRADAY',
           symbol: 'IBM',
