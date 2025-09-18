@@ -66,10 +66,10 @@ const defaultConfig: ServerConfig = {
   },
   cache: {
     ttl: 300, // 5 minutes
-    redis_url: process.env.REDIS_URL || 'redis://localhost:6379'
+    redis_url: process.env.REDIS_URL || 'redis://:password@redis:6379'
   },
   memory: {
-    mongodb_url: process.env.MONGODB_URL || 'mongodb://localhost:27017/mcp_oracle',
+    mongodb_url: process.env.MONGODB_URL || 'mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle',
     database_name: 'mcp_oracle'
   }
 };

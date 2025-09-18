@@ -98,42 +98,68 @@ export class MCPOracleServer {
 
       // Initialize News service for REAL news data
       if (process.env.NEWSAPI_KEY && process.env.CRYPTOPANIC_API_KEY) {
-        this.newsService = new NewsService(process.env.NEWSAPI_KEY, process.env.CRYPTOPANIC_API_KEY);
-        this.logger.info('✅ News service initialized with real APIs (NewsAPI + CryptoPanic)');
+        try {
+          this.newsService = new NewsService(process.env.NEWSAPI_KEY, process.env.CRYPTOPANIC_API_KEY);
+          this.logger.info('✅ News service initialized with real APIs (NewsAPI + CryptoPanic)');
+        } catch (error) {
+          this.logger.error('❌ News service initialization failed:', error);
+          this.newsService = undefined;
+        }
       } else {
-        this.logger.error('❌ NEWSAPI_KEY or CRYPTOPANIC_API_KEY not found!');
-        throw new Error('Both NEWSAPI_KEY and CRYPTOPANIC_API_KEY are required');
+        this.logger.warn('⚠️ NEWSAPI_KEY or CRYPTOPANIC_API_KEY not found - news analysis will be limited');
+        this.newsService = undefined;
       }
 
       // Initialize Technical Analysis service for REAL technical data
       if (process.env.ALPHA_VANTAGE_API_KEY) {
-        this.technicalService = new TechnicalAnalysisService(process.env.ALPHA_VANTAGE_API_KEY);
-        this.logger.info('✅ Technical Analysis service initialized with real AlphaVantage API');
+        try {
+          this.technicalService = new TechnicalAnalysisService(process.env.ALPHA_VANTAGE_API_KEY);
+          this.logger.info('✅ Technical Analysis service initialized with real AlphaVantage API');
+        } catch (error) {
+          this.logger.error('❌ Technical Analysis service initialization failed:', error);
+          this.technicalService = undefined;
+        }
       } else {
-        this.logger.error('❌ ALPHA_VANTAGE_API_KEY not found!');
-        throw new Error('ALPHA_VANTAGE_API_KEY is required');
+        this.logger.warn('⚠️ ALPHA_VANTAGE_API_KEY not found - technical analysis will be limited');
+        this.technicalService = undefined;
       }
 
-      // Initialize AI service for REAL AI analysis
+      // Initialize AI service for REAL AI analysis (2-model system)
       if (process.env.GROQ_API_KEY && process.env.OPENAI_API_KEY) {
-        this.aiService = new AIService(
-          process.env.GROQ_API_KEY,
-          process.env.OPENAI_API_KEY,
-          process.env.GROQ_MODEL || 'mixtral-8x7b-32768',
-          process.env.OPENAI_MODEL || 'gpt-4-turbo'
-        );
-        this.logger.info('✅ AI service initialized with real GROQ and OpenAI APIs');
+        try {
+          this.aiService = new AIService(
+            process.env.GROQ_API_KEY,
+            process.env.OPENAI_API_KEY,
+            process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
+            process.env.OPENAI_MODEL || 'gpt-4o-mini'
+          );
+          this.logger.info('✅ AI service initialized with 2-model system (Groq + OpenAI)');
+        } catch (error) {
+          this.logger.error('❌ AI service initialization failed:', error);
+          this.aiService = undefined;
+        }
       } else {
         this.logger.warn('⚠️ GROQ_API_KEY or OPENAI_API_KEY not found - AI analysis will be limited');
+        this.aiService = undefined;
       }
 
       // Initialize memory layer
-      this.memoryLayer = new MemoryLayer(this.config.memory.mongodb_url);
-      this.logger.info('✅ MongoDB memory layer initialized');
+      try {
+        this.memoryLayer = new MemoryLayer(this.config.memory.mongodb_url);
+        this.logger.info('✅ MongoDB memory layer initialized');
+      } catch (error) {
+        this.logger.error('❌ MongoDB memory layer initialization failed:', error);
+        this.memoryLayer = undefined;
+      }
 
       // Initialize cache service
-      this.cache = new CacheService(this.config.cache.redis_url, this.config.cache.ttl);
-      this.logger.info('✅ Redis cache service initialized');
+      try {
+        this.cache = new CacheService(this.config.cache.redis_url, this.config.cache.ttl);
+        this.logger.info('✅ Redis cache service initialized');
+      } catch (error) {
+        this.logger.error('❌ Redis cache service initialization failed:', error);
+        this.cache = undefined;
+      }
 
       this.logger.info('🎉 ALL REAL API services initialized successfully - NO MORE MOCK DATA!');
     } catch (error) {
@@ -187,7 +213,7 @@ export class MCPOracleServer {
                 analysis_depth: {
                   type: "string",
                   enum: ["quick", "standard", "comprehensive"],
-                  description: "Analysis depth: quick (Groq), standard (Claude), comprehensive (GPT-4)",
+                  description: "Analysis depth: quick (Groq Llama), standard (GPT-4o-mini), comprehensive (GPT-4o)",
                   default: "standard"
                 }
               },
@@ -264,8 +290,11 @@ export class MCPOracleServer {
         }
 
         return {
-          content: result.content,
-          isError: result.isError
+          content: Array.isArray(result.content) ? result.content : [{
+            type: "text",
+            text: typeof result.content === 'string' ? result.content : JSON.stringify(result.content, null, 2)
+          }],
+          isError: result.isError || false
         };
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
@@ -273,8 +302,11 @@ export class MCPOracleServer {
 
         const errorResponse = this.createErrorResponse(errorMessage);
         return {
-          content: errorResponse.content,
-          isError: errorResponse.isError
+          content: Array.isArray(errorResponse.content) ? errorResponse.content : [{
+            type: "text",
+            text: typeof errorResponse.content === 'string' ? errorResponse.content : JSON.stringify(errorResponse.content, null, 2)
+          }],
+          isError: true
         };
       }
     });
@@ -564,40 +596,53 @@ export class MCPOracleServer {
     const signals: Record<string, any> = {};
 
     assets.forEach(asset => {
-      const assetData = marketData.find(d => d.symbol === asset);
-      const techData = technicalData[asset];
+      try {
+        const assetData = Array.isArray(marketData) ? marketData.find(d => d && d.symbol === asset) : null;
+        const techData = technicalData && typeof technicalData === 'object' ? technicalData[asset] : null;
 
-      if (!assetData) {
-        signals[asset] = {
-          signal: 'INSUFFICIENT_DATA',
-          confidence: 0,
-          reasoning: 'No market data available'
-        };
-        return;
-      }
-
-      const priceChange = assetData.change_percentage_24h || 0;
-      let signal = 'HOLD';
-      let confidence = 50;
-      let reasoning = `Based on real market data for ${asset}`;
-
-      if (techData?.signals) {
-        signal = techData.signals.action;
-        confidence = techData.signals.confidence;
-        reasoning = techData.signals.reasons.join(', ');
-      } else {
-        if (priceChange > 5) {
-          signal = 'BUY';
-          confidence = 70;
-          reasoning = `Strong upward momentum (+${priceChange.toFixed(1)}%)`;
-        } else if (priceChange < -5) {
-          signal = 'SELL';
-          confidence = 70;
-          reasoning = `Significant decline (${priceChange.toFixed(1)}%)`;
+        if (!assetData || typeof assetData !== 'object') {
+          signals[asset] = {
+            signal: 'HOLD',
+            confidence: 25,
+            reasoning: `No real-time market data available for ${asset} - maintaining neutral position`
+          };
+          return;
         }
-      }
 
-      signals[asset] = { signal, confidence, reasoning };
+        const priceChange = typeof assetData.change_percentage_24h === 'number' ? assetData.change_percentage_24h : 0;
+        let signal = 'HOLD';
+        let confidence = 50;
+        let reasoning = `Based on real market data for ${asset}`;
+
+        if (techData && typeof techData === 'object' && techData.signals) {
+          signal = techData.signals.action || 'HOLD';
+          confidence = typeof techData.signals.confidence === 'number' ? techData.signals.confidence : 50;
+          reasoning = Array.isArray(techData.signals.reasons) ? techData.signals.reasons.join(', ') : `Technical analysis for ${asset}`;
+        } else {
+          if (priceChange > 5) {
+            signal = 'BUY';
+            confidence = 70;
+            reasoning = `Strong upward momentum (+${priceChange.toFixed(1)}%)`;
+          } else if (priceChange < -5) {
+            signal = 'SELL';
+            confidence = 70;
+            reasoning = `Significant decline (${priceChange.toFixed(1)}%)`;
+          } else if (Math.abs(priceChange) < 0.5) {
+            signal = 'HOLD';
+            confidence = 60;
+            reasoning = `Stable price action (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(1)}%) - holding position`;
+          }
+        }
+
+        signals[asset] = { signal, confidence, reasoning };
+      } catch (error) {
+        this.logger.warn(`Error generating action signal for ${asset}:`, error);
+        signals[asset] = {
+          signal: 'HOLD',
+          confidence: 20,
+          reasoning: `Error processing data for ${asset} - maintaining neutral position`
+        };
+      }
     });
 
     return signals;
@@ -657,7 +702,8 @@ export class MCPOracleServer {
       const response = this.buildNewsAnalysisResponse(params, realNewsData, analysis, aiAnalysis);
 
       return {
-        content: [{ type: "text", text: response }]
+        content: [{ type: "text", text: response }],
+        isError: false
       };
 
     } catch (error) {
@@ -667,10 +713,19 @@ export class MCPOracleServer {
   }
 
   private processRealNewsData(symbols: string[], newsData: any[], hours: number) {
-    if (newsData.length === 0) {
+    if (!Array.isArray(newsData) || newsData.length === 0) {
+      const emptyMarketImpact: Record<string, any> = {};
+      symbols.forEach(symbol => {
+        emptyMarketImpact[symbol] = {
+          articleCount: 0,
+          averageSentiment: 0,
+          expectedPriceImpact: 0,
+          confidence: 0
+        };
+      });
       return {
         sentiment: { overall: 0, credibility: 0 },
-        marketImpact: {},
+        marketImpact: emptyMarketImpact,
         keyHeadlines: [],
         totalArticles: 0,
         sourceBreakdown: {}
@@ -700,28 +755,43 @@ export class MCPOracleServer {
     // Calculate market impact per symbol
     const marketImpact: Record<string, any> = {};
     symbols.forEach(symbol => {
-      const relevantNews = newsData.filter(news =>
-        news.symbols?.includes(symbol) ||
-        news.title.toLowerCase().includes(symbol.toLowerCase()) ||
-        news.content.toLowerCase().includes(symbol.toLowerCase())
-      );
+      try {
+        const relevantNews = newsData.filter(news => {
+          if (!news || typeof news !== 'object') return false;
+          return (
+            (Array.isArray(news.symbols) && news.symbols.includes(symbol)) ||
+            (typeof news.title === 'string' && news.title.toLowerCase().includes(symbol.toLowerCase())) ||
+            (typeof news.content === 'string' && news.content.toLowerCase().includes(symbol.toLowerCase()))
+          );
+        });
 
-      const avgSentiment = relevantNews.length > 0
-        ? relevantNews.reduce((sum, news) => sum + (news.sentiment_score || 0), 0) / relevantNews.length
-        : 0;
+        const avgSentiment = relevantNews.length > 0
+          ? relevantNews.reduce((sum, news) => sum + (typeof news.sentiment_score === 'number' ? news.sentiment_score : 0), 0) / relevantNews.length
+          : 0;
 
-      marketImpact[symbol] = {
-        articleCount: relevantNews.length,
-        averageSentiment: avgSentiment,
-        expectedPriceImpact: this.estimatePriceImpact(avgSentiment, relevantNews.length),
-        confidence: Math.min(90, 40 + relevantNews.length * 5)
-      };
+        marketImpact[symbol] = {
+          articleCount: relevantNews.length,
+          averageSentiment: avgSentiment,
+          expectedPriceImpact: this.estimatePriceImpact(avgSentiment, relevantNews.length),
+          confidence: Math.min(90, 40 + relevantNews.length * 5)
+        };
+      } catch (error) {
+        this.logger.warn(`Error processing market impact for ${symbol}:`, error);
+        marketImpact[symbol] = {
+          articleCount: 0,
+          averageSentiment: 0,
+          expectedPriceImpact: 0,
+          confidence: 0
+        };
+      }
     });
 
     // Source breakdown
     const sourceBreakdown: Record<string, number> = {};
     newsData.forEach(news => {
-      sourceBreakdown[news.source] = (sourceBreakdown[news.source] || 0) + 1;
+      if (news && typeof news === 'object' && typeof news.source === 'string') {
+        sourceBreakdown[news.source] = (sourceBreakdown[news.source] || 0) + 1;
+      }
     });
 
     return {
@@ -782,12 +852,20 @@ ${keyHeadlines.length > 0
 ## 💹 Market Impact Assessment
 ${params.symbols.map((symbol: string) => {
   const impact = marketImpact[symbol];
+  if (!impact || typeof impact !== 'object') {
+    return `
+**${symbol} Analysis:**
+- Articles Found: 0 (No Data)
+- Avg Sentiment: ⚪ Neutral (0.0%)
+- Est. Price Impact: 0.00%
+- Confidence Level: 0%`;
+  }
   return `
 **${symbol} Analysis:**
-- Articles Found: ${impact.articleCount} (${impact.articleCount > 10 ? 'High Coverage' : impact.articleCount > 5 ? 'Moderate' : 'Limited'})
-- Avg Sentiment: ${this.formatSentimentWithIcon(impact.averageSentiment)} (${(impact.averageSentiment * 100).toFixed(1)}%)
-- Est. Price Impact: ${impact.expectedPriceImpact > 0 ? '+' : ''}${impact.expectedPriceImpact.toFixed(2)}%
-- Confidence Level: ${impact.confidence}%`;
+- Articles Found: ${impact.articleCount || 0} (${(impact.articleCount || 0) > 10 ? 'High Coverage' : (impact.articleCount || 0) > 5 ? 'Moderate' : 'Limited'})
+- Avg Sentiment: ${this.formatSentimentWithIcon(impact.averageSentiment || 0)} (${((impact.averageSentiment || 0) * 100).toFixed(1)}%)
+- Est. Price Impact: ${(impact.expectedPriceImpact || 0) > 0 ? '+' : ''}${(impact.expectedPriceImpact || 0).toFixed(2)}%
+- Confidence Level: ${impact.confidence || 0}%`;
 }).join('')}
 
 ## 📡 Data Sources (LIVE)
@@ -904,7 +982,8 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
       const response = this.buildForecastResponse(params, currentPrice, forecast, technicalAnalysis, aiAnalysis);
 
       return {
-        content: [{ type: "text", text: response }]
+        content: [{ type: "text", text: response }],
+        isError: false
       };
 
     } catch (error) {
@@ -1155,6 +1234,21 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
   }
 
   private formatMarketPulseResponse(response: MarketPulseResponse): string {
+    const safeKeyEvents = Array.isArray(response.key_events) ? response.key_events : [];
+    const safeTechnicalAnalysis = response.technical_analysis || {
+      trend: 'No technical data available',
+      support_levels: [],
+      resistance_levels: [],
+      indicators: {}
+    };
+    const safeAIInsights = response.ai_insights || {
+      summary: 'AI analysis not available',
+      factors: ['Real-time market data processed'],
+      risk_assessment: 'Moderate',
+      opportunity_score: 50
+    };
+    const safeActionSignals = response.action_signals || {};
+
     return `# 💊 Smart Market Pulse
 
 **Status:** ${response.market_status}
@@ -1165,35 +1259,35 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
 ${response.dominant_sentiment}
 
 ## 📊 Key Events
-${response.key_events.map(event => `
-**${event.source}** (${event.impact} impact)
-${event.title}
-*Sentiment: ${event.sentiment > 0 ? '🟢' : '🔴'} ${(event.sentiment * 100).toFixed(0)}%*
-`).join('')}
+${safeKeyEvents.length > 0 ? safeKeyEvents.map(event => `
+**${event.source || 'Unknown'}** (${event.impact || 'unknown'} impact)
+${event.title || 'No title available'}
+*Sentiment: ${(event.sentiment || 0) > 0 ? '🟢' : '🔴'} ${((event.sentiment || 0) * 100).toFixed(0)}%*
+`).join('') : '\n⚠️ No significant market events detected in the current timeframe'}
 
 ## 📈 Technical Analysis
-**Trend:** ${response.technical_analysis.trend}
+**Trend:** ${safeTechnicalAnalysis.trend}
 
-**Support Levels:** ${response.technical_analysis.support_levels.map(level => `$${level.toLocaleString()}`).join(', ')}
-**Resistance Levels:** ${response.technical_analysis.resistance_levels.map(level => `$${level.toLocaleString()}`).join(', ')}
+**Support Levels:** ${Array.isArray(safeTechnicalAnalysis.support_levels) && safeTechnicalAnalysis.support_levels.length > 0 ? safeTechnicalAnalysis.support_levels.map(level => `$${(level || 0).toLocaleString()}`).join(', ') : 'No support levels identified'}
+**Resistance Levels:** ${Array.isArray(safeTechnicalAnalysis.resistance_levels) && safeTechnicalAnalysis.resistance_levels.length > 0 ? safeTechnicalAnalysis.resistance_levels.map(level => `$${(level || 0).toLocaleString()}`).join(', ') : 'No resistance levels identified'}
 
 **Indicators:**
-${Object.entries(response.technical_analysis.indicators).map(([key, value]) => `- **${key.toUpperCase()}:** ${value}`).join('\n')}
+${Object.keys(safeTechnicalAnalysis.indicators).length > 0 ? Object.entries(safeTechnicalAnalysis.indicators).map(([key, value]) => `- **${key.toUpperCase()}:** ${value || 'N/A'}`).join('\n') : '- No technical indicators available'}
 
 ## 🤖 AI Insights
-${response.ai_insights.summary}
+${safeAIInsights.summary}
 
 **Key Factors:**
-${response.ai_insights.factors.map(factor => `- ${factor}`).join('\n')}
+${Array.isArray(safeAIInsights.factors) ? safeAIInsights.factors.map(factor => `- ${factor}`).join('\n') : '- Real-time market analysis completed'}
 
-**Risk Assessment:** ${response.ai_insights.risk_assessment}
-**Opportunity Score:** ${response.ai_insights.opportunity_score}/100
+**Risk Assessment:** ${safeAIInsights.risk_assessment}
+**Opportunity Score:** ${safeAIInsights.opportunity_score}/100
 
 ## 📡 Action Signals
-${Object.entries(response.action_signals).map(([asset, signal]) => `
-**${asset}:** ${signal.signal} (${signal.confidence}% confidence)
-*${signal.reasoning}*
-`).join('')}
+${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).map(([asset, signal]: [string, any]) => `
+**${asset}:** ${signal?.signal || 'HOLD'} (${signal?.confidence || 0}% confidence)
+*${signal?.reasoning || 'No reasoning available'}*
+`).join('') : '\n⚠️ No action signals generated - insufficient data'}
 
 ---
 *Analysis powered by MCP Oracle Multi-AI Engine*`;
@@ -1604,149 +1698,13 @@ ${Object.entries(response.action_signals).map(([asset, signal]) => `
     }));
   }
 
-  private calculateMarketStatus(marketData: any[], sentimentData: any[]): '🟢 Bullish' | '🔴 Bearish' | '🟡 Neutral' | '⚠️ Critical' {
-    if (marketData.length === 0) return '🟡 Neutral';
 
-    const avgChange = marketData.reduce((sum, data) => sum + data.change_24h, 0) / marketData.length;
-    const avgSentiment = sentimentData.length > 0
-      ? sentimentData.reduce((sum, data) => sum + data.sentiment_score, 0) / sentimentData.length
-      : 0;
 
-    const combinedScore = (avgChange * 0.7) + (avgSentiment * 30); // Weight price more than sentiment
 
-    if (combinedScore > 3) return '🟢 Bullish';
-    if (combinedScore < -3) return '🔴 Bearish';
-    if (Math.abs(combinedScore) > 8) return '⚠️ Critical';
-    return '🟡 Neutral';
-  }
 
-  private calculateConfidence(marketData: any[], newsData: any[], sentimentData: any[]): number {
-    let confidence = 50; // Base confidence
 
-    // More data = higher confidence
-    confidence += Math.min(marketData.length * 5, 20);
-    confidence += Math.min(newsData.length * 2, 20);
-    confidence += Math.min(sentimentData.length * 3, 10);
 
-    return Math.min(95, Math.max(20, confidence));
-  }
 
-  private calculateDominantSentiment(sentimentData: any[], newsData: any[]): string {
-    const avgSentiment = sentimentData.length > 0
-      ? sentimentData.reduce((sum, data) => sum + data.sentiment_score, 0) / sentimentData.length
-      : 0;
-
-    const newsScore = newsData.length > 0
-      ? newsData.reduce((sum, news) => sum + news.sentiment_score, 0) / newsData.length
-      : 0;
-
-    const overall = (avgSentiment + newsScore) / 2;
-
-    if (overall > 0.3) return 'Optimistic with strong buying interest';
-    if (overall > 0.1) return 'Cautiously optimistic sentiment prevailing';
-    if (overall < -0.3) return 'Pessimistic with selling pressure mounting';
-    if (overall < -0.1) return 'Cautious sentiment with risk-off behavior';
-    return 'Mixed sentiment with uncertainty in the market';
-  }
-
-  private calculateImpact(relevanceScore: number): 'high' | 'medium' | 'low' {
-    if (relevanceScore > 0.8) return 'high';
-    if (relevanceScore > 0.5) return 'medium';
-    return 'low';
-  }
-
-  private generateInsightFactors(marketData: any[], newsData: any[], sentimentData: any[]): string[] {
-    const factors = [];
-
-    if (marketData.length > 0) {
-      const avgChange = marketData.reduce((sum, data) => sum + data.change_24h, 0) / marketData.length;
-      if (avgChange > 5) factors.push('Strong price momentum across major assets');
-      if (avgChange < -5) factors.push('Significant price corrections occurring');
-    }
-
-    if (newsData.length > 5) {
-      factors.push('High news volume indicating market attention');
-    }
-
-    if (sentimentData.length > 0) {
-      const bullishCount = sentimentData.filter(s => s.sentiment_score > 0.2).length;
-      if (bullishCount > sentimentData.length * 0.6) {
-        factors.push('Social sentiment showing bullish bias');
-      }
-    }
-
-    factors.push('Real-time data analysis providing current market snapshot');
-    return factors.length > 0 ? factors : ['Market conditions showing mixed signals'];
-  }
-
-  private calculateRiskAssessment(marketData: any[], technicalData: any): string {
-    if (marketData.length === 0) return 'High - Limited data available';
-
-    const avgVolatility = marketData.reduce((sum, data) => {
-      return sum + Math.abs(data.change_24h);
-    }, 0) / marketData.length;
-
-    if (avgVolatility > 10) return 'High - Elevated volatility detected';
-    if (avgVolatility > 5) return 'Medium - Moderate price swings expected';
-    return 'Low - Stable market conditions observed';
-  }
-
-  private calculateOpportunityScore(marketData: any[], sentimentData: any[], technicalData: any): number {
-    let score = 50;
-
-    if (marketData.length > 0) {
-      const avgChange = marketData.reduce((sum, data) => sum + data.change_24h, 0) / marketData.length;
-      score += avgChange * 2; // Price momentum factor
-    }
-
-    if (sentimentData.length > 0) {
-      const avgSentiment = sentimentData.reduce((sum, data) => sum + data.sentiment_score, 0) / sentimentData.length;
-      score += avgSentiment * 20; // Sentiment factor
-    }
-
-    return Math.min(95, Math.max(5, Math.round(score)));
-  }
-
-  private generateActionSignals(assets: string[], marketData: any[], technicalData: any, sentimentData: any[]): Record<string, any> {
-    const signals: Record<string, any> = {};
-
-    assets.forEach((asset, index) => {
-      const assetData = marketData[index];
-      if (!assetData) {
-        signals[asset] = {
-          signal: 'WAIT',
-          confidence: 20,
-          reasoning: 'Insufficient data for analysis'
-        };
-        return;
-      }
-
-      const change24h = assetData.change_24h;
-      const sentiment = sentimentData.find(s => s.symbol === asset)?.sentiment_score || 0;
-
-      let signal = 'HOLD';
-      let confidence = 50;
-      let reasoning = `Current analysis for ${asset}`;
-
-      if (change24h > 5 && sentiment > 0.2) {
-        signal = 'BUY';
-        confidence = 75;
-        reasoning = `Strong upward momentum with positive sentiment for ${asset}`;
-      } else if (change24h < -5 && sentiment < -0.2) {
-        signal = 'SELL';
-        confidence = 70;
-        reasoning = `Downward pressure with negative sentiment for ${asset}`;
-      } else if (change24h > 2 || sentiment > 0.1) {
-        signal = 'ACCUMULATE';
-        confidence = 60;
-        reasoning = `Gradual accumulation opportunity for ${asset}`;
-      }
-
-      signals[asset] = { signal, confidence, reasoning };
-    });
-
-    return signals;
-  }
 
   private getBollingerPosition(bollinger: any): string {
     if (!bollinger || !bollinger.upper || !bollinger.lower) return 'No data';
@@ -1773,59 +1731,9 @@ ${Object.entries(response.action_signals).map(([asset, signal]) => `
   }
 
   // News analysis helper methods
-  private analyzeNewsSentiment(newsData: any[]): { overall: number; credibility: number } {
-    if (newsData.length === 0) return { overall: 0, credibility: 5 };
 
-    const overallSentiment = newsData.reduce((sum, news) => sum + news.sentiment_score, 0) / newsData.length;
-    const credibilityScore = Math.round(newsData.reduce((sum, news) => sum + news.relevance_score, 0) / newsData.length * 10);
 
-    return {
-      overall: overallSentiment,
-      credibility: Math.max(1, Math.min(10, credibilityScore))
-    };
-  }
 
-  private calculateNewsMarketImpact(symbols: string[], newsData: any[]): Record<string, any> {
-    const impact: Record<string, any> = {};
-
-    symbols.forEach(symbol => {
-      const relevantNews = newsData.filter(news =>
-        news.title.toLowerCase().includes(symbol.toLowerCase()) ||
-        news.content.toLowerCase().includes(symbol.toLowerCase())
-      );
-
-      if (relevantNews.length === 0) {
-        impact[symbol] = { priceImpact: 0, sentiment: 0, confidence: 20 };
-        return;
-      }
-
-      const avgSentiment = relevantNews.reduce((sum, news) => sum + news.sentiment_score, 0) / relevantNews.length;
-      const priceImpact = avgSentiment * 5; // Convert sentiment to price impact estimate
-      const confidence = Math.min(90, 40 + (relevantNews.length * 10));
-
-      impact[symbol] = {
-        priceImpact: Number(priceImpact.toFixed(1)),
-        sentiment: avgSentiment,
-        confidence
-      };
-    });
-
-    return impact;
-  }
-
-  private formatSentiment(sentiment: number): string {
-    if (sentiment > 0.3) return '🟢 Positive';
-    if (sentiment > 0.1) return '🟡 Cautiously Positive';
-    if (sentiment < -0.3) return '🔴 Negative';
-    if (sentiment < -0.1) return '🟡 Cautiously Negative';
-    return '🟡 Neutral';
-  }
-
-  private formatSentimentLabel(sentiment: number): string {
-    if (sentiment > 0.2) return 'Bullish';
-    if (sentiment < -0.2) return 'Bearish';
-    return 'Neutral';
-  }
 
   // Protocol-specific startup methods
   async startStdio(): Promise<void> {

@@ -70,33 +70,6 @@ export interface MarketData {
   timestamp: string;
 }
 
-export interface NewsItem {
-  title: string;
-  content: string;
-  source: string;
-  url: string;
-  timestamp: string;
-  sentiment_score: number;
-  relevance_score: number;
-}
-
-export interface SentimentData {
-  source: 'reddit' | 'twitter' | 'news' | 'telegram';
-  symbol: string;
-  sentiment_score: number;
-  volume: number;
-  timestamp: string;
-}
-
-export interface TechnicalIndicators {
-  rsi: number;
-  macd: { value: number; signal: number; histogram: number };
-  bollinger_bands: { upper: number; middle: number; lower: number };
-  sma_20: number;
-  sma_50: number;
-  sma_200: number;
-  volume_sma: number;
-}
 
 export interface PatternMatch {
   pattern_id: string;

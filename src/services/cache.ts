@@ -15,37 +15,59 @@ export class CacheService {
 
   private async initializeClient(redisUrl: string): Promise<void> {
     try {
+      // Parse Redis URL and handle Docker container networking
+      const parsedUrl = new URL(redisUrl);
+
+      // Fix IPv6 localhost issue for Docker
+      if (parsedUrl.hostname === '::1' || parsedUrl.hostname === 'localhost') {
+        parsedUrl.hostname = 'redis';
+        this.logger.info(`🔧 Fixed Redis hostname for Docker: ${parsedUrl.toString()}`);
+      }
+
       this.client = createClient({
-        url: redisUrl,
+        url: parsedUrl.toString(),
         socket: {
-          reconnectStrategy: (retries) => Math.min(retries * 50, 500)
-        }
+          reconnectStrategy: (retries) => {
+            const delay = Math.min(retries * 50, 500);
+            this.logger.debug(`Redis reconnect attempt ${retries}, delay: ${delay}ms`);
+            return delay;
+          },
+          connectTimeout: 10000
+        },
+        // Handle authentication if present in URL
+        password: parsedUrl.password || undefined
       });
 
       this.client.on('error', (err) => {
-        this.logger.error('Redis Client Error:', err);
+        this.logger.error('❌ Redis Client Error:', err);
         this.isConnected = false;
       });
 
       this.client.on('connect', () => {
-        this.logger.info('Redis Client Connected');
+        this.logger.info('✅ Redis Client Connected to', parsedUrl.hostname);
         this.isConnected = true;
       });
 
       this.client.on('ready', () => {
-        this.logger.info('Redis Client Ready');
+        this.logger.info('🚀 Redis Client Ready');
         this.isConnected = true;
       });
 
       this.client.on('end', () => {
-        this.logger.info('Redis Client Disconnected');
+        this.logger.info('🔌 Redis Client Disconnected');
         this.isConnected = false;
       });
 
+      this.client.on('reconnecting', () => {
+        this.logger.info('🔄 Redis Client Reconnecting...');
+      });
+
       await this.client.connect();
+      this.logger.info(`✅ Redis cache service initialized successfully`);
     } catch (error) {
-      this.logger.warn('Redis connection failed, operating without cache:', error);
+      this.logger.warn('⚠️ Redis connection failed, operating without cache:', error);
       this.isConnected = false;
+      // Don't throw error - allow service to work without cache
     }
   }
 

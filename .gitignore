@@ -142,4 +142,6 @@ patterns/
 training-data/
 
 # Jupyter notebooks checkpoints
-.ipynb_checkpoints/
+.ipynb_checkpoints/build/
+*.log
+logs/

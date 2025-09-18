@@ -66,13 +66,21 @@ export class AIService {
   private openaiApiKey: string;
   private groqModel: string;
   private openaiModel: string;
+  private openaiComprehensiveModel: string;
   private logger = loggers.ai;
 
-  constructor(groqApiKey: string, openaiApiKey: string, groqModel: string = 'mixtral-8x7b-32768', openaiModel: string = 'gpt-4-turbo') {
+  constructor(
+    groqApiKey: string,
+    openaiApiKey: string,
+    groqModel: string = 'llama-3.1-8b-instant',
+    openaiModel: string = 'gpt-4o-mini',
+    openaiComprehensiveModel: string = 'gpt-4o'
+  ) {
     this.groqApiKey = groqApiKey;
     this.openaiApiKey = openaiApiKey;
     this.groqModel = groqModel;
     this.openaiModel = openaiModel;
+    this.openaiComprehensiveModel = openaiComprehensiveModel;
 
     // GROQ client setup
     this.groqClient = axios.create({
@@ -156,9 +164,21 @@ export class AIService {
     const prompt = this.buildMarketPulsePrompt(request);
 
     try {
-      const response = request.depth === 'quick'
-        ? await this.callGroq(prompt)
-        : await this.callOpenAI(prompt);
+      let response: any;
+
+      if (request.depth === 'quick') {
+        response = await this.callGroq(prompt);
+      } else if (request.depth === 'comprehensive') {
+        response = await this.callOpenAI(prompt, this.openaiComprehensiveModel);
+      } else {
+        // Standard depth - use GPT-4o-mini, fallback to Groq
+        try {
+          response = await this.callOpenAI(prompt, this.openaiModel);
+        } catch (error) {
+          this.logger.warn('OpenAI failed, falling back to Groq:', error);
+          response = await this.callGroq(prompt);
+        }
+      }
 
       const analysis = this.parseAIResponse(response.content);
 
@@ -188,9 +208,19 @@ export class AIService {
     const prompt = this.buildNewsSentimentPrompt(request);
 
     try {
-      const response = request.depth === 'comprehensive'
-        ? await this.callOpenAI(prompt)
-        : await this.callGroq(prompt);
+      let response: any;
+
+      if (request.depth === 'comprehensive') {
+        response = await this.callOpenAI(prompt, this.openaiComprehensiveModel);
+      } else {
+        // Standard or quick - use GPT-4o-mini, fallback to Groq
+        try {
+          response = await this.callOpenAI(prompt, this.openaiModel);
+        } catch (error) {
+          this.logger.warn('OpenAI failed for news analysis, falling back to Groq:', error);
+          response = await this.callGroq(prompt);
+        }
+      }
 
       const analysis = this.parseAIResponse(response.content);
 
@@ -220,7 +250,15 @@ export class AIService {
     const prompt = this.buildForecastPrompt(request);
 
     try {
-      const response = await this.callOpenAI(prompt); // Always use OpenAI for forecasting
+      let response: any;
+
+      // Use most capable model for forecasting based on depth
+      if (request.depth === 'comprehensive') {
+        response = await this.callOpenAI(prompt, this.openaiComprehensiveModel);
+      } else {
+        // Standard or quick - use GPT-4o-mini for accuracy
+        response = await this.callOpenAI(prompt, this.openaiModel);
+      }
 
       const analysis = this.parseAIResponse(response.content);
 
@@ -299,11 +337,16 @@ export class AIService {
     };
   }
 
-  private async callOpenAI(prompt: string): Promise<{ content: string; model: string }> {
-    this.logger.debug('🧠 Calling OpenAI for analysis');
+  private async callOpenAI(prompt: string, model?: string): Promise<{ content: string; model: string }> {
+    const modelToUse = model || this.openaiModel;
+    const maxTokens = modelToUse === this.openaiComprehensiveModel ? 8000 :
+                     modelToUse === this.openaiModel ? 4000 : 3000;
+    const temperature = modelToUse === this.openaiComprehensiveModel ? 0.7 : 0.5;
+
+    this.logger.debug(`🧠 Calling OpenAI ${modelToUse} for analysis`);
 
     const response = await this.openaiClient.post<OpenAIResponse>('/chat/completions', {
-      model: this.openaiModel,
+      model: modelToUse,
       messages: [
         {
           role: 'system',
@@ -314,8 +357,8 @@ export class AIService {
           content: prompt
         }
       ],
-      max_tokens: 3000,
-      temperature: 0.2,
+      max_tokens: maxTokens,
+      temperature,
       top_p: 0.8
     });
 

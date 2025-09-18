@@ -58,7 +58,8 @@ export class MemoryLayer {
   private logger = loggers.mongodb;
 
   constructor(connectionString?: string) {
-    this.connectionString = connectionString || process.env.MONGODB_URL || 'mongodb://localhost:27017/mcp_oracle';
+    // Default to Docker-compatible MongoDB URL
+    this.connectionString = connectionString || process.env.MONGODB_URL || 'mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle';
   }
 
   async initialize(): Promise<void> {
@@ -68,14 +69,35 @@ export class MemoryLayer {
         const mongodb = await import('mongodb');
         MongoClient = mongodb.MongoClient;
       } catch (error) {
-        this.logger.warn('MongoDB not available, skipping initialization', { error });
+        this.logger.warn('📦 MongoDB not available, skipping initialization', { error });
         return;
       }
     }
 
     try {
-      this.client = new MongoClient(this.connectionString);
+      // Parse and fix MongoDB URL for Docker networking
+      let fixedConnectionString = this.connectionString;
+
+      // Fix localhost references for Docker environment
+      if (fixedConnectionString.includes('localhost:27017')) {
+        fixedConnectionString = fixedConnectionString.replace('localhost:27017', 'mongodb:27017');
+        this.logger.info(`🔧 Fixed MongoDB URL for Docker: ${fixedConnectionString.replace(/:\/\/[^@]+@/, '://***@')}`);
+      }
+
+      this.client = new MongoClient(fixedConnectionString, {
+        connectTimeoutMS: 10000,
+        serverSelectionTimeoutMS: 5000,
+        socketTimeoutMS: 45000,
+        maxPoolSize: 10,
+        retryWrites: true,
+        retryReads: true
+      });
+
       await this.client.connect();
+
+      // Test the connection
+      await this.client.db('admin').ping();
+
       this.db = this.client.db(this.dbName);
 
       this.patternsCollection = this.db.collection('market_patterns');
@@ -83,10 +105,11 @@ export class MemoryLayer {
       this.newsCacheCollection = this.db.collection('news_cache');
 
       await this.createIndexes();
-      this.logger.info('MongoDB MemoryLayer initialized successfully');
+      this.logger.info('✅ MongoDB MemoryLayer initialized successfully');
     } catch (error) {
-      this.logger.error('Failed to initialize MongoDB:', error);
-      this.logger.warn('MongoDB features will be disabled');
+      this.logger.error('❌ Failed to initialize MongoDB:', error);
+      this.logger.warn('⚠️ MongoDB features will be disabled - continuing without memory layer');
+      // Don't throw error - allow service to work without MongoDB
     }
   }
 
