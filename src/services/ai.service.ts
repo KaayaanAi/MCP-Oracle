@@ -72,8 +72,8 @@ export class AIService {
   constructor(
     groqApiKey: string,
     openaiApiKey: string,
-    groqModel: string = 'llama-3.1-8b-instant',
-    openaiModel: string = 'gpt-4o-mini',
+    groqModel: string = 'openai/gpt-oss-120b',
+    openaiModel: string = 'gpt-5-nano',
     openaiComprehensiveModel: string = 'gpt-4o'
   ) {
     this.groqApiKey = groqApiKey;

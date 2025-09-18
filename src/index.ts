@@ -23,19 +23,13 @@ const defaultConfig: ServerConfig = {
     providers: {
       groq: {
         name: 'groq',
-        model: 'mixtral-8x7b-32768',
+        model: 'openai/gpt-oss-120b',
         maxTokens: 1000,
         temperature: 0.3
       },
-      anthropic: {
-        name: 'anthropic',
-        model: 'claude-3-haiku-20240307',
-        maxTokens: 2000,
-        temperature: 0.5
-      },
       openai: {
         name: 'openai',
-        model: 'gpt-4o',
+        model: 'gpt-5-nano',
         maxTokens: 4000,
         temperature: 0.7
       }
@@ -148,8 +142,7 @@ ENVIRONMENT VARIABLES:
   REDIS_URL           Redis connection URL
   MONGODB_URL         MongoDB connection URL
   GROQ_API_KEY        Groq API key for quick analysis
-  ANTHROPIC_API_KEY   Anthropic API key for standard analysis
-  OPENAI_API_KEY      OpenAI API key for deep analysis
+  OPENAI_API_KEY      OpenAI API key for standard and comprehensive analysis
   LOG_LEVEL           Logging level (debug, info, warn, error)
 
 TOOLS:

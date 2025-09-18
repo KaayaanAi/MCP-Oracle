@@ -130,8 +130,8 @@ export class MCPOracleServer {
           this.aiService = new AIService(
             process.env.GROQ_API_KEY,
             process.env.OPENAI_API_KEY,
-            process.env.GROQ_MODEL || 'llama-3.1-8b-instant',
-            process.env.OPENAI_MODEL || 'gpt-4o-mini'
+            process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
+            process.env.OPENAI_MODEL || 'gpt-5-nano'
           );
           this.logger.info('✅ AI service initialized with 2-model system (Groq + OpenAI)');
         } catch (error) {

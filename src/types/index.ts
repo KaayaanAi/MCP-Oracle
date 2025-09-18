@@ -47,7 +47,7 @@ export interface MarketPulseResponse {
 }
 
 export interface AIProvider {
-  name: 'groq' | 'anthropic' | 'openai';
+  name: 'groq' | 'openai';
   model: string;
   maxTokens: number;
   temperature: number;

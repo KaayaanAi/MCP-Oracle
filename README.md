@@ -19,8 +19,8 @@ MCP Oracle is a sophisticated financial intelligence platform that provides comp
 
 ### 🤖 **AI-Powered Analysis Engine** *(Recently Updated)*
 - **2-Model Intelligence System** *(Optimized for Performance & Cost)*
-  - 🚀 **Quick**: Groq Llama 3.1 8B Instant (sub-second responses)
-  - 📊 **Standard**: OpenAI GPT-4o-mini (balanced analysis & cost)
+  - 🚀 **Quick**: Groq OSS 120B (sub-second responses)
+  - 📊 **Standard**: OpenAI GPT-5-nano (balanced analysis & cost)
   - 🧠 **Comprehensive**: OpenAI GPT-4o (maximum capability)
 
 ### 📈 **Financial Intelligence Tools**
@@ -126,7 +126,7 @@ Comprehensive multi-asset market analysis with AI-powered insights.
 **Parameters:**
 - `assets` (string[]): List of assets to analyze (e.g., ["BTC", "ETH", "AAPL"])
 - `timeframe` (string): Analysis period ("last_4_hours", "last_24_hours", "last_week")
-- `analysis_depth` (string): AI analysis level ("quick" - Groq Llama, "standard" - GPT-4o-mini, "comprehensive" - GPT-4o)
+- `analysis_depth` (string): AI analysis level ("quick" - Groq OSS, "standard" - GPT-5-nano, "comprehensive" - GPT-4o)
 
 **Example:**
 ```json

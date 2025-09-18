@@ -78,7 +78,7 @@ Comprehensive multi-asset market analysis with AI-powered insights.
       }
     ],
     "ai_insights": {
-      "model": "claude-3-sonnet-20240229",
+      "model": "gpt-5-nano",
       "analysis": "Market shows consolidation...",
       "confidence": 0.78,
       "key_factors": ["Fed policy", "Institutional adoption"],
@@ -148,7 +148,7 @@ Real-time financial news impact analysis and sentiment scoring.
       }
     ],
     "ai_summary": {
-      "model": "claude-3-sonnet-20240229",
+      "model": "gpt-5-nano",
       "overall_sentiment": "Bullish momentum driven by institutional developments",
       "confidence": 0.84,
       "market_impact": "Positive near-term outlook with regulatory clarity"
@@ -207,7 +207,7 @@ AI-powered price predictions based on historical patterns and current conditions
       }
     ],
     "ai_analysis": {
-      "model": "gpt-4-turbo",
+      "model": "gpt-4o",
       "summary": "Technical indicators suggest continued upward momentum...",
       "key_drivers": ["Institutional inflows", "Technical breakout"],
       "risk_factors": ["Regulatory uncertainty", "Market volatility"],
