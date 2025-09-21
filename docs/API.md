@@ -49,7 +49,10 @@ Comprehensive multi-asset market analysis with AI-powered insights.
 **Parameters Details:**
 - `assets` (string[]): Asset symbols to analyze
 - `timeframe` (string): "last_4_hours", "last_24_hours", "last_week"
-- `analysis_depth` (string): "quick", "standard", "comprehensive"
+- `analysis_depth` (string):
+  - "quick" (Groq openai/gpt-oss-120b - sub-second responses)
+  - "standard" (OpenAI gpt-5-nano - balanced analysis & cost)
+  - "comprehensive" (OpenAI gpt-4o - maximum capability)
 
 **Response:**
 ```json
@@ -529,7 +532,7 @@ Response:
 {
   "status": "healthy",
   "timestamp": "2024-01-15T10:30:00Z",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "services": {
     "ai_models": "operational",
     "memory_layer": "operational",
