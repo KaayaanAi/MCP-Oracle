@@ -605,7 +605,7 @@ export class TechnicalAnalysisService {
 
   async healthCheck(): Promise<boolean> {
     try {
-      const _response = await this.client.get('', {
+      await this.client.get('', {
         params: {
           function: 'TIME_SERIES_INTRADAY',
           symbol: 'IBM',

@@ -6,9 +6,10 @@ import type {
   CacheEntry,
   Cacheable,
   AssetSymbol,
-  Timestamp,
   Result,
-  APIError
+  APIError,
+  AppError,
+  Timestamp
 } from '../types/index.js';
 import {
   createSuccess,
@@ -88,7 +89,7 @@ export class CacheService {
           connectTimeout: 10000
         },
         // Handle authentication if present in URL
-        password: parsedUrl.password || undefined
+        ...(parsedUrl.password && { password: parsedUrl.password })
       });
 
       this.client.on('error', (err) => {
@@ -124,7 +125,7 @@ export class CacheService {
     }
   }
 
-  async get<T extends Cacheable = Cacheable>(key: string): Promise<Result<T, APIError>> {
+  async get<T extends Cacheable = Cacheable>(key: string): Promise<Result<T, AppError>> {
     if (!this.isConnected || !this.client) {
       const error: APIError = {
         type: 'api_error',
@@ -151,7 +152,7 @@ export class CacheService {
         return createError(error);
       }
 
-      const entry: CacheEntry<T> = JSON.parse(cached);
+      const entry: CacheEntry<T> = JSON.parse(cached as string);
 
       // Check if entry has expired
       if (Date.now() > entry.timestamp + entry.ttl * 1000) {
@@ -183,7 +184,7 @@ export class CacheService {
     }
   }
 
-  async set<T extends Cacheable = Cacheable>(key: string, data: T, ttl?: number): Promise<Result<boolean, APIError>> {
+  async set<T extends Cacheable = Cacheable>(key: string, data: T, ttl?: number): Promise<Result<boolean, AppError>> {
     if (!this.isConnected || !this.client) {
       const error: APIError = {
         type: 'api_error',
@@ -289,7 +290,7 @@ export class CacheService {
 
       // Parse memory usage from info string
       const memoryMatch = info.match(/used_memory_human:(.+)/);
-      const memoryUsage = memoryMatch ? memoryMatch[1].trim() : 'Unknown';
+      const memoryUsage = memoryMatch?.[1]?.trim() || 'Unknown';
 
       return {
         connected: true,
@@ -304,75 +305,91 @@ export class CacheService {
   }
 
   // Market-specific cache methods with strong typing
-  async getCachedMarketData(symbols: readonly AssetSymbol[]): Promise<Result<MarketDataCacheEntry[], APIError>> {
+  async getCachedMarketData(symbols: readonly AssetSymbol[]): Promise<Result<MarketDataCacheEntry[], AppError>> {
     const key = `market_data:${[...symbols].sort().join(',')}`;
-    return await this.get<MarketDataCacheEntry[]>(key);
+    const result = await this.get<{ data: MarketDataCacheEntry[]; timestamp: Timestamp }>(key);
+    if (result.success) {
+      return createSuccess((result.data as any).data || []);
+    }
+    return result as any as Result<MarketDataCacheEntry[], AppError>;
   }
 
   async setCachedMarketData(
     symbols: readonly AssetSymbol[],
     data: MarketDataCacheEntry[],
     ttl = 300
-  ): Promise<Result<boolean, APIError>> {
+  ): Promise<Result<boolean, AppError>> {
     const key = `market_data:${[...symbols].sort().join(',')}`;
-    // Add timestamp to make it Cacheable
-    const cacheableData = data.map(item => ({
-      ...item,
-      timestamp: item.timestamp || createTimestamp(new Date().toISOString())
-    })) as MarketDataCacheEntry[] & Cacheable;
+    // Create cacheable wrapper
+    const cacheableData = {
+      data,
+      timestamp: createTimestamp(new Date().toISOString())
+    } as any as Cacheable;
     return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedNews(symbols: string[], hours: number): Promise<Result<any[], APIError>> {
+  async getCachedNews(symbols: string[], hours: number): Promise<Result<any[], AppError>> {
     const key = `news:${symbols.sort().join(',')}:${hours}h`;
-    return await this.get<any[]>(key);
+    const result = await this.get<{ data: any[]; timestamp: Timestamp }>(key);
+    if (result.success) {
+      return createSuccess((result.data as any).data || []);
+    }
+    return result as any as Result<any[], AppError>;
   }
 
-  async setCachedNews(symbols: string[], hours: number, data: any[], ttl = 1800): Promise<Result<boolean, APIError>> {
+  async setCachedNews(symbols: string[], hours: number, data: any[], ttl = 1800): Promise<Result<boolean, AppError>> {
     const key = `news:${symbols.sort().join(',')}:${hours}h`;
-    const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) };
+    const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) } as any as Cacheable;
     return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedSentiment(symbols: string[]): Promise<Result<any[], APIError>> {
+  async getCachedSentiment(symbols: string[]): Promise<Result<any[], AppError>> {
     const key = `sentiment:${symbols.sort().join(',')}`;
-    return await this.get<any[]>(key);
+    const result = await this.get<{ data: any[]; timestamp: Timestamp }>(key);
+    if (result.success) {
+      return createSuccess((result.data as any).data || []);
+    }
+    return result as any as Result<any[], AppError>;
   }
 
-  async setCachedSentiment(symbols: string[], data: any[], ttl = 900): Promise<Result<boolean, APIError>> {
+  async setCachedSentiment(symbols: string[], data: any[], ttl = 900): Promise<Result<boolean, AppError>> {
     const key = `sentiment:${symbols.sort().join(',')}`;
-    const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) };
+    const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) } as any as Cacheable;
     return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedTechnicalData(symbol: string): Promise<Result<any, APIError>> {
+  async getCachedTechnicalData(symbol: string): Promise<Result<any, AppError>> {
     const key = `technical:${symbol}`;
     return await this.get<any>(key);
   }
 
-  async setCachedTechnicalData(symbol: string, data: any, ttl = 600): Promise<Result<boolean, APIError>> {
+  async setCachedTechnicalData(symbol: string, data: any, ttl = 600): Promise<Result<boolean, AppError>> {
     const key = `technical:${symbol}`;
     const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) };
     return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedPrice(symbol: string): Promise<Result<number, APIError>> {
+  async getCachedPrice(symbol: string): Promise<Result<number, AppError>> {
     const key = `price:${symbol}`;
-    return await this.get<number>(key);
+    const result = await this.get<{ price: number; timestamp: Timestamp }>(key);
+    if (result.success) {
+      return createSuccess((result.data as any).price || 0);
+    }
+    return result as Result<number, AppError>;
   }
 
-  async setCachedPrice(symbol: string, price: number, ttl = 60): Promise<Result<boolean, APIError>> {
+  async setCachedPrice(symbol: string, price: number, ttl = 60): Promise<Result<boolean, AppError>> {
     const key = `price:${symbol}`;
-    const cacheableData = { price, timestamp: createTimestamp(new Date().toISOString()) };
+    const cacheableData: Cacheable = { price, timestamp: createTimestamp(new Date().toISOString()) } as any;
     return await this.set(key, cacheableData, ttl);
   }
 
-  async getCachedForecast(symbol: string, days: number): Promise<Result<any, APIError>> {
+  async getCachedForecast(symbol: string, days: number): Promise<Result<any, AppError>> {
     const key = `forecast:${symbol}:${days}d`;
     return await this.get<any>(key);
   }
 
-  async setCachedForecast(symbol: string, days: number, data: any, ttl = 3600): Promise<Result<boolean, APIError>> {
+  async setCachedForecast(symbol: string, days: number, data: any, ttl = 3600): Promise<Result<boolean, AppError>> {
     const key = `forecast:${symbol}:${days}d`;
     const cacheableData = { data, timestamp: createTimestamp(new Date().toISOString()) };
     return await this.set(key, cacheableData, ttl);

@@ -1,5 +1,8 @@
 version: '3.8'
 
+# MCP Oracle v1.2.0 - Production Docker Compose Configuration
+# Security hardened, optimized performance, 372+ lines of dead code removed
+
 services:
   mcp-oracle:
     build:
@@ -14,8 +17,8 @@ services:
       - NODE_ENV=production
       - PORT=4006
       - WS_PORT=4007
-      - REDIS_URL=redis://:KuwaitRedis2025!@redis:6379
-      - MONGODB_URL=mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle
+      - REDIS_URL=${REDIS_URL}
+      - MONGODB_URL=${MONGODB_URL}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     env_file:
       - .env
@@ -42,7 +45,7 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass KuwaitRedis2025!
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:

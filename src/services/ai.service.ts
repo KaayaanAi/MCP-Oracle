@@ -6,11 +6,12 @@ import type {
   AIAnalysisRequest,
   AIAnalysisResponse,
   AssetSymbol,
-  AnalysisDepth,
-  ConfidenceScore,
-  Timestamp,
   Result,
   APIError,
+  AppError,
+  Timestamp
+} from '../types/index.js';
+import {
   createSuccess,
   createError,
   createTimestamp,
@@ -87,8 +88,8 @@ export interface AIServiceResponse {
 export class AIService {
   private groqClient: AxiosInstance;
   private openaiClient: AxiosInstance;
-  private groqApiKey: string;
-  private openaiApiKey: string;
+  private readonly groqApiKey: string;
+  private readonly openaiApiKey: string;
   private groqModel: string;
   private openaiModel: string;
   private openaiComprehensiveModel: string;
@@ -185,7 +186,7 @@ export class AIService {
    */
   async analyzeMarketPulse(
     request: AIAnalysisRequest & { data: MarketPulseData }
-  ): Promise<Result<AIAnalysisResponse, APIError>> {
+  ): Promise<Result<AIAnalysisResponse, AppError>> {
     this.logger.info(`🔍 Analyzing market pulse for ${request.symbols.join(', ')} with ${request.depth} depth`);
 
     const prompt = this.buildMarketPulsePrompt(request);
@@ -241,7 +242,7 @@ export class AIService {
    */
   async analyzeNewsSentiment(
     request: AIAnalysisRequest & { data: NewsSentimentData }
-  ): Promise<Result<AIAnalysisResponse, APIError>> {
+  ): Promise<Result<AIAnalysisResponse, AppError>> {
     this.logger.info(`📰 Analyzing news sentiment for ${request.symbols.join(', ')}`);
 
     const prompt = this.buildNewsSentimentPrompt(request);
@@ -295,7 +296,7 @@ export class AIService {
    */
   async generateForecast(
     request: AIAnalysisRequest & { data: ForecastData }
-  ): Promise<Result<AIAnalysisResponse, APIError>> {
+  ): Promise<Result<AIAnalysisResponse, AppError>> {
     this.logger.info(`🔮 Generating forecast for ${request.symbols.join(', ')}`);
 
     const prompt = this.buildForecastPrompt(request);
@@ -345,7 +346,7 @@ export class AIService {
    */
   async analyzeTechnical(
     request: AIAnalysisRequest & { data: TechnicalAnalysisData }
-  ): Promise<Result<AIAnalysisResponse, APIError>> {
+  ): Promise<Result<AIAnalysisResponse, AppError>> {
     this.logger.info(`📊 Analyzing technical data for ${request.symbols.join(', ')}`);
 
     const prompt = this.buildTechnicalPrompt(request);
@@ -405,7 +406,7 @@ export class AIService {
     });
 
     return {
-      content: response.data.choices[0].message.content,
+      content: response.data.choices[0]?.message.content || '',
       model: `GROQ ${response.data.model}`,
       tokensUsed: response.data.usage.total_tokens
     };
@@ -437,7 +438,7 @@ export class AIService {
     });
 
     return {
-      content: response.data.choices[0].message.content,
+      content: response.data.choices[0]?.message.content || '',
       model: `OpenAI ${response.data.model}`,
       tokensUsed: response.data.usage.total_tokens
     };
@@ -449,16 +450,16 @@ export class AIService {
     return `Analyze the current market pulse for ${symbols.join(', ')} based on the following REAL market data:
 
 MARKET DATA:
-${JSON.stringify(data.marketData, null, 2)}
+${JSON.stringify((data as any).marketData, null, 2)}
 
 NEWS DATA:
-${JSON.stringify(data.newsData.slice(0, 10), null, 2)}
+${JSON.stringify(((data as any).newsData as any[])?.slice(0, 10), null, 2)}
 
 TECHNICAL DATA:
-${JSON.stringify(data.technicalData, null, 2)}
+${JSON.stringify((data as any).technicalData, null, 2)}
 
 SENTIMENT DATA:
-${JSON.stringify(data.sentimentData, null, 2)}
+${JSON.stringify((data as any).sentimentData, null, 2)}
 
 Please provide a comprehensive analysis in the following JSON format:
 {
@@ -483,7 +484,7 @@ Focus on:
     return `Analyze the sentiment and market impact of recent news for ${symbols.join(', ')}:
 
 NEWS ARTICLES:
-${JSON.stringify(data, null, 2)}
+${JSON.stringify((data as any), null, 2)}
 
 Please provide detailed sentiment analysis in the following JSON format:
 {
@@ -508,13 +509,13 @@ Focus on:
     return `Generate a market forecast for ${symbols.join(', ')} based on this comprehensive data:
 
 HISTORICAL PRICE DATA:
-${JSON.stringify(data.historicalData?.slice(0, 30), null, 2)}
+${JSON.stringify(((data as any).historicalData as any[])?.slice(0, 30), null, 2)}
 
 CURRENT TECHNICAL INDICATORS:
-${JSON.stringify(data.technicalData, null, 2)}
+${JSON.stringify((data as any).technicalData, null, 2)}
 
 MARKET FUNDAMENTALS:
-${JSON.stringify(data.fundamentals, null, 2)}
+${JSON.stringify((data as any).fundamentals, null, 2)}
 
 Please provide a detailed forecast in the following JSON format:
 {

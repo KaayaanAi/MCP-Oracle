@@ -1,10 +1,10 @@
 {
-  "project_name": "🚀 MCP Oracle",
+  "project_name": "MCP-Oracle",
   "daddy_version": "1.0.0",
   "database_file": "daddy-validation.db",
   "validation_enabled": true,
   "auto_validate": true,
-  "created_at": "2025-09-14T16:17:22+03:00",
+  "created_at": "2025-09-21T11:28:09+03:00",
   "last_validation": null,
   "settings": {
     "validation_timeout": 120,

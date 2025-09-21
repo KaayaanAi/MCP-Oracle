@@ -9,6 +9,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+  InitializeRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import cors from "cors";
 import express from "express";
@@ -16,6 +21,7 @@ import helmet from "helmet";
 import winston from "winston";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 // Local imports
 import type {
@@ -34,16 +40,16 @@ import { TechnicalAnalysisService } from '../services/technical.service.js';
 
 export class MCPOracleServer {
   private server!: Server;
-  private config: ServerConfig;
+  private readonly config: ServerConfig;
   private logger!: winston.Logger;
   private expressApp?: express.Application;
   private httpServer?: HttpServer;
   private wsServer?: WebSocketServer;
-  private coinGecko?: CoinGeckoService;
-  private newsService?: NewsService;
-  private technicalService?: TechnicalAnalysisService;
-  private aiService?: AIService;
-  private memoryLayer?: MemoryLayer;
+  private coinGecko: CoinGeckoService | undefined;
+  private newsService: NewsService | undefined;
+  private technicalService: TechnicalAnalysisService | undefined;
+  private aiService: AIService | undefined;
+  private memoryLayer: MemoryLayer | undefined;
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -87,76 +93,181 @@ export class MCPOracleServer {
     try {
       this.logger.info('🚀 Initializing REAL API services...');
 
-      // Initialize CoinGecko service for REAL price data (free tier if no key)
-      const coinGeckoKey = process.env['COINGECKO_API_KEY'] || '';
-      this.coinGecko = new CoinGeckoService(coinGeckoKey);
-      if (coinGeckoKey) {
-        this.logger.info('✅ CoinGecko service initialized with Pro API key');
-      } else {
-        this.logger.info('✅ CoinGecko service initialized with FREE tier (no API key) - trigger restart');
-      }
-
-      // Initialize News service for REAL news data
-      if (process.env['NEWSAPI_KEY'] && process.env['CRYPTOPANIC_API_KEY']) {
-        try {
-          this.newsService = new NewsService(process.env['NEWSAPI_KEY'], process.env['CRYPTOPANIC_API_KEY']);
-          this.logger.info('✅ News service initialized with real APIs (NewsAPI + CryptoPanic)');
-        } catch (error) {
-          this.logger.error('❌ News service initialization failed:', error);
-          this.newsService = undefined;
-        }
-      } else {
-        this.logger.warn('⚠️ NEWSAPI_KEY or CRYPTOPANIC_API_KEY not found - news analysis will be limited');
-        this.newsService = undefined;
-      }
-
-      // Initialize Technical Analysis service for REAL technical data
-      if (process.env['ALPHA_VANTAGE_API_KEY']) {
-        try {
-          this.technicalService = new TechnicalAnalysisService(process.env['ALPHA_VANTAGE_API_KEY']);
-          this.logger.info('✅ Technical Analysis service initialized with real AlphaVantage API');
-        } catch (error) {
-          this.logger.error('❌ Technical Analysis service initialization failed:', error);
-          this.technicalService = undefined;
-        }
-      } else {
-        this.logger.warn('⚠️ ALPHA_VANTAGE_API_KEY not found - technical analysis will be limited');
-        this.technicalService = undefined;
-      }
-
-      // Initialize AI service for REAL AI analysis (2-model system)
-      if (process.env['GROQ_API_KEY'] && process.env['OPENAI_API_KEY']) {
-        try {
-          this.aiService = new AIService(
-            process.env['GROQ_API_KEY'],
-            process.env['OPENAI_API_KEY'],
-            process.env['GROQ_MODEL'] || 'openai/gpt-oss-120b',
-            process.env['OPENAI_MODEL'] || 'gpt-4o-mini'
-          );
-          this.logger.info('✅ AI service initialized with 2-model system (Groq + OpenAI)');
-        } catch (error) {
-          this.logger.error('❌ AI service initialization failed:', error);
-          this.aiService = undefined;
-        }
-      } else {
-        this.logger.warn('⚠️ GROQ_API_KEY or OPENAI_API_KEY not found - AI analysis will be limited');
-        this.aiService = undefined;
-      }
-
-      // Initialize memory layer
-      try {
-        this.memoryLayer = new MemoryLayer(this.config.memory.mongodb_url);
-        this.logger.info('✅ MongoDB memory layer initialized');
-      } catch (error) {
-        this.logger.error('❌ MongoDB memory layer initialization failed:', error);
-        this.memoryLayer = undefined;
-      }
-
+      this.initializeCoinGeckoService();
+      this.initializeNewsService();
+      this.initializeTechnicalService();
+      this.initializeAIService();
+      this.initializeMemoryLayer();
 
       this.logger.info('🎉 ALL REAL API services initialized successfully - NO MORE MOCK DATA!');
     } catch (error) {
       this.logger.error('❌ Failed to initialize real API services:', error);
       throw error;
+    }
+  }
+
+  private initializeCoinGeckoService(): void {
+    const coinGeckoKey = process.env['COINGECKO_API_KEY'] || '';
+    this.coinGecko = new CoinGeckoService(coinGeckoKey);
+    if (coinGeckoKey) {
+      this.logger.info('✅ CoinGecko service initialized with Pro API key');
+    } else {
+      this.logger.info('✅ CoinGecko service initialized with FREE tier (no API key) - trigger restart');
+    }
+  }
+
+  private initializeNewsService(): void {
+    if (process.env['NEWSAPI_KEY'] && process.env['CRYPTOPANIC_API_KEY']) {
+      try {
+        this.newsService = new NewsService(process.env['NEWSAPI_KEY'], process.env['CRYPTOPANIC_API_KEY']);
+        this.logger.info('✅ News service initialized with real APIs (NewsAPI + CryptoPanic)');
+      } catch (error) {
+        this.logger.error('❌ News service initialization failed:', error);
+        this.newsService = undefined;
+      }
+    } else {
+      this.logger.warn('⚠️ NEWSAPI_KEY or CRYPTOPANIC_API_KEY not found - news analysis will be limited');
+    }
+  }
+
+  private initializeTechnicalService(): void {
+    if (process.env['ALPHA_VANTAGE_API_KEY']) {
+      try {
+        this.technicalService = new TechnicalAnalysisService(process.env['ALPHA_VANTAGE_API_KEY']);
+        this.logger.info('✅ Technical Analysis service initialized with real AlphaVantage API');
+      } catch (error) {
+        this.logger.error('❌ Technical Analysis service initialization failed:', error);
+        this.technicalService = undefined;
+      }
+    } else {
+      this.logger.warn('⚠️ ALPHA_VANTAGE_API_KEY not found - technical analysis will be limited');
+    }
+  }
+
+  private initializeAIService(): void {
+    if (process.env['GROQ_API_KEY'] && process.env['OPENAI_API_KEY']) {
+      try {
+        this.aiService = new AIService(
+          process.env['GROQ_API_KEY'],
+          process.env['OPENAI_API_KEY'],
+          process.env['GROQ_MODEL'] || 'openai/gpt-oss-120b',
+          process.env['OPENAI_MODEL'] || 'gpt-4o-mini'
+        );
+        this.logger.info('✅ AI service initialized with 2-model system (Groq + OpenAI)');
+      } catch (error) {
+        this.logger.error('❌ AI service initialization failed:', error);
+        this.aiService = undefined;
+      }
+    } else {
+      this.logger.warn('⚠️ GROQ_API_KEY or OPENAI_API_KEY not found - AI analysis will be limited');
+    }
+  }
+
+  private initializeMemoryLayer(): void {
+    try {
+      this.memoryLayer = new MemoryLayer(this.config.memory.mongodb_url);
+      this.logger.info('✅ MongoDB memory layer initialized');
+    } catch (error) {
+      this.logger.error('❌ MongoDB memory layer initialization failed:', error);
+    }
+  }
+
+  private getNewsImpactLevel(relevanceScore: number): string {
+    if (relevanceScore > 0.8) return 'high';
+    if (relevanceScore > 0.5) return 'medium';
+    return 'low';
+  }
+
+  // Request validation schemas
+  private readonly jsonRpcRequestSchema = z.object({
+    jsonrpc: z.literal("2.0"),
+    method: z.string().min(1).max(100),
+    params: z.record(z.unknown()).optional(),
+    id: z.union([z.string(), z.number(), z.null()]).optional()
+  });
+
+  private readonly toolRequestSchemas = {
+    getSmartMarketPulse: z.object({
+      assets: z.array(z.string().min(1).max(10)).min(1).max(20),
+      timeframe: z.enum(['last_4_hours', 'last_24_hours', 'last_week']).default('last_24_hours'),
+      analysis_depth: z.enum(['quick', 'standard', 'comprehensive']).default('standard')
+    }),
+    analyzeFinancialNews: z.object({
+      symbols: z.array(z.string().min(1).max(10)).min(1).max(20),
+      hours: z.number().min(1).max(168).default(24)
+    }),
+    getMarketForecast: z.object({
+      symbol: z.string().min(1).max(10),
+      days: z.number().min(1).max(365).default(7)
+    })
+  };
+
+  private readonly resourceRequestSchema = z.object({
+    uri: z.string().min(1).max(500).regex(/^[a-zA-Z0-9-_:/]+$/)
+  });
+
+  private readonly promptRequestSchema = z.object({
+    name: z.string().min(1).max(100),
+    arguments: z.record(z.unknown()).optional()
+  });
+
+  private validateJsonRpcRequest(req: express.Request, res: express.Response, next: express.NextFunction): void {
+    try {
+      // Validate request size first
+      const requestSize = JSON.stringify(req.body).length;
+      if (requestSize > 1048576) { // 1MB limit
+        this.logger.warn(`Request too large: ${requestSize} bytes`);
+        res.status(413).json({
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: -32600,
+            message: "Request too large"
+          }
+        });
+        return;
+      }
+
+      // Validate JSON-RPC structure
+      const validationResult = this.jsonRpcRequestSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        this.logger.warn('Invalid JSON-RPC request:', validationResult.error);
+        res.status(400).json({
+          jsonrpc: "2.0",
+          id: req.body?.id || null,
+          error: {
+            code: -32600,
+            message: "Invalid Request"
+          }
+        });
+        return;
+      }
+
+      next();
+    } catch (error) {
+      this.logger.error('Validation middleware error:', error);
+      res.status(500).json({
+        jsonrpc: "2.0",
+        id: req.body?.id || null,
+        error: {
+          code: -32603,
+          message: "Internal server error"
+        }
+      });
+    }
+  }
+
+  private validateToolParams(toolName: string, params: any): any {
+    const schema = this.toolRequestSchemas[toolName as keyof typeof this.toolRequestSchemas];
+    if (!schema) {
+      throw new Error(`Unknown tool: ${toolName}`);
+    }
+
+    try {
+      return schema.parse(params);
+    } catch (error) {
+      this.logger.warn(`Invalid parameters for tool ${toolName}:`, error);
+      throw new Error(`Invalid parameters for tool ${toolName}: ${error instanceof Error ? error.message : 'Validation failed'}`);
     }
   }
 
@@ -170,6 +281,9 @@ export class MCPOracleServer {
       {
         capabilities: {
           tools: {},
+          resources: {},
+          prompts: {},
+          logging: {}
         },
       }
     );
@@ -303,7 +417,212 @@ export class MCPOracleServer {
       }
     });
 
-    this.logger.info('🛠️ MCP tools registered successfully');
+    // Handle initialize request (required for MCP handshake)
+    this.server.setRequestHandler(InitializeRequestSchema, async (request) => {
+      this.logger.info('🤝 MCP initialization request received', { params: request.params });
+
+      return {
+        protocolVersion: "2024-11-05",
+        capabilities: {
+          tools: {},
+          resources: {},
+          prompts: {},
+          logging: {}
+        },
+        serverInfo: {
+          name: "mcp-oracle",
+          version: "1.0.0"
+        }
+      };
+    });
+
+    // Handle resources/list
+    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+      this.logger.debug('📋 Listing available resources');
+
+      return {
+        resources: [
+          {
+            uri: "market-data://current",
+            name: "Current Market Data",
+            description: "Real-time market data for supported assets",
+            mimeType: "application/json"
+          },
+          {
+            uri: "news://financial",
+            name: "Financial News",
+            description: "Latest financial news and analysis",
+            mimeType: "application/json"
+          },
+          {
+            uri: "analysis://patterns",
+            name: "Market Patterns",
+            description: "Historical market patterns and insights",
+            mimeType: "application/json"
+          }
+        ]
+      };
+    });
+
+    // Handle resources/read
+    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const { uri } = request.params;
+      this.logger.info(`📖 Reading resource: ${uri}`);
+
+      try {
+        switch (true) {
+          case uri.startsWith("market-data://"): {
+            const uriPart = uri.split("//")[1];
+            const symbols = uriPart === "current" ? ["BTC", "ETH"] : (uriPart ? [uriPart] : ["BTC", "ETH"]);
+            const marketData = await this.coinGecko?.getDetailedMarketData(symbols);
+            return {
+              contents: [{
+                uri,
+                mimeType: "application/json",
+                text: JSON.stringify(marketData, null, 2)
+              }]
+            };
+          }
+
+          case uri.startsWith("news://"): {
+            const newsData = await this.newsService?.getAggregatedNews(["BTC", "ETH"], 24);
+            return {
+              contents: [{
+                uri,
+                mimeType: "application/json",
+                text: JSON.stringify(newsData, null, 2)
+              }]
+            };
+          }
+
+          case uri.startsWith("analysis://"): {
+            const analysisData = { patterns: "Market pattern analysis would go here" };
+            return {
+              contents: [{
+                uri,
+                mimeType: "application/json",
+                text: JSON.stringify(analysisData, null, 2)
+              }]
+            };
+          }
+
+          default:
+            throw new Error(`Unknown resource URI: ${uri}`);
+        }
+      } catch (error) {
+        throw new Error(`Failed to read resource ${uri}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    });
+
+    // Handle prompts/list
+    this.server.setRequestHandler(ListPromptsRequestSchema, async () => {
+      this.logger.debug('📋 Listing available prompts');
+
+      return {
+        prompts: [
+          {
+            name: "market-analysis",
+            description: "Generate comprehensive market analysis for specified assets",
+            arguments: [
+              {
+                name: "assets",
+                description: "Comma-separated list of asset symbols",
+                required: true
+              },
+              {
+                name: "timeframe",
+                description: "Analysis timeframe (e.g., 24h, 7d, 30d)",
+                required: false
+              }
+            ]
+          },
+          {
+            name: "risk-assessment",
+            description: "Assess investment risk for specified portfolio",
+            arguments: [
+              {
+                name: "portfolio",
+                description: "JSON object describing portfolio allocation",
+                required: true
+              }
+            ]
+          },
+          {
+            name: "news-summary",
+            description: "Summarize recent financial news impact",
+            arguments: [
+              {
+                name: "symbols",
+                description: "Asset symbols to focus news analysis on",
+                required: false
+              }
+            ]
+          }
+        ]
+      };
+    });
+
+    // Handle prompts/get
+    this.server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      const { name, arguments: args } = request.params;
+      this.logger.info(`🎯 Getting prompt: ${name}`, { args });
+
+      switch (name) {
+        case "market-analysis": {
+          const assets = args?.['assets'] || "BTC,ETH";
+          const timeframe = args?.['timeframe'] || "24h";
+          return {
+            description: `Market analysis for ${assets} over ${timeframe}`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Analyze the market performance for ${assets} over the past ${timeframe}. Include price movements, volume trends, sentiment analysis, and provide actionable insights for investors.`
+                }
+              }
+            ]
+          };
+        }
+
+        case "risk-assessment": {
+          const portfolio = args?.['portfolio'] || "{}";
+          return {
+            description: "Portfolio risk assessment",
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Assess the risk profile of this portfolio: ${portfolio}. Analyze diversification, volatility, correlation risks, and provide recommendations for risk mitigation.`
+                }
+              }
+            ]
+          };
+        }
+
+        case "news-summary": {
+          const symbols = args?.['symbols'] || "BTC,ETH,SPY";
+          return {
+            description: `News impact summary for ${symbols}`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Summarize the recent financial news and its potential impact on ${symbols}. Focus on market-moving events and sentiment shifts.`
+                }
+              }
+            ]
+          };
+        }
+
+        default:
+          throw new Error(`Unknown prompt: ${name}`);
+      }
+    });
+
+    this.logger.info('🛠️ All MCP protocol handlers registered successfully');
   }
 
   private async handleGetSmartMarketPulse(args: any): Promise<MCPToolResponse> {
@@ -319,8 +638,9 @@ export class MCPOracleServer {
     this.logger.info(`📊 Expected BTC ~$116,000, ETH ~$4,654 - NO MOCK DATA ALLOWED`);
 
     try {
-      if (!this.coinGecko || !this.newsService || !this.technicalService) {
-        throw new Error('Required services not initialized - cannot provide real data');
+      // Check for at least CoinGecko service (basic requirement)
+      if (!this.coinGecko) {
+        return this.createErrorResponse('CoinGecko service not initialized - market data unavailable. Please ensure API access is configured.');
       }
 
       // Initialize memory layer
@@ -334,9 +654,9 @@ export class MCPOracleServer {
       this.logger.info('🔍 Fetching REAL market data from APIs...');
 
       const [marketData, newsData, technicalAnalysis] = await Promise.allSettled([
-        this.coinGecko.getDetailedMarketData(params.assets),
-        this.newsService.getAggregatedNews(params.assets, timeframeHours),
-        this.getTechnicalAnalysisForAssets(params.assets)
+        this.coinGecko!.getDetailedMarketData([...params.assets]),
+        this.newsService?.getAggregatedNews([...params.assets], timeframeHours) || Promise.resolve([]),
+        this.getTechnicalAnalysisForAssets([...params.assets])
       ]);
 
       // Validate we got real data
@@ -358,16 +678,19 @@ export class MCPOracleServer {
       let aiAnalysis: any = null;
       if (this.aiService) {
         try {
-          aiAnalysis = await this.aiService.analyzeMarketPulse({
+          const analysisResult = await this.aiService.analyzeMarketPulse({
             type: 'market_pulse',
             data: {
               marketData: realMarketData,
               newsData: realNewsData,
               technicalData: realTechnicalData
             },
-            symbols: params.assets,
+            symbols: [...params.assets].map(s => s as any),
             depth: params.analysis_depth
           });
+          if (analysisResult.success) {
+            aiAnalysis = analysisResult.data;
+          }
           this.logger.info(`🤖 AI analysis completed using ${aiAnalysis.model_used}`);
         } catch (error) {
           this.logger.warn('⚠️ AI analysis failed, continuing with manual analysis:', error);
@@ -426,7 +749,7 @@ export class MCPOracleServer {
 
     const technicalPromises = assets.map(async (asset) => {
       try {
-        const analysis = await this.technicalService!.getComprehensiveAnalysis(asset);
+        const analysis = await this.technicalService?.getComprehensiveAnalysis(asset);
         return { [asset]: analysis };
       } catch (error) {
         this.logger.warn(`⚠️ Technical analysis failed for ${asset}:`, error);
@@ -466,7 +789,7 @@ export class MCPOracleServer {
       key_events: newsData.slice(0, 5).map(news => ({
         source: news.source,
         title: news.title,
-        impact: news.relevance_score > 0.8 ? 'high' : news.relevance_score > 0.5 ? 'medium' : 'low',
+        impact: this.getNewsImpactLevel(news.relevance_score) as 'high' | 'medium' | 'low',
         sentiment: news.sentiment_score,
         timestamp: news.timestamp
       })),
@@ -475,7 +798,7 @@ export class MCPOracleServer {
         support_levels: this.extractSupportLevels(technicalData),
         resistance_levels: this.extractResistanceLevels(technicalData),
         indicators: this.extractIndicators(technicalData)
-      },
+      } as any,
       ai_insights: aiAnalysis ? {
         summary: aiAnalysis.analysis,
         factors: aiAnalysis.insights,
@@ -589,55 +912,89 @@ export class MCPOracleServer {
 
     assets.forEach(asset => {
       try {
-        const assetData = Array.isArray(marketData) ? marketData.find(d => d && d.symbol === asset) : null;
-        const techData = technicalData && typeof technicalData === 'object' ? technicalData[asset] : null;
-
-        if (!assetData || typeof assetData !== 'object') {
-          signals[asset] = {
-            signal: 'HOLD',
-            confidence: 25,
-            reasoning: `No real-time market data available for ${asset} - maintaining neutral position`
-          };
-          return;
-        }
-
-        const priceChange = typeof assetData.change_percentage_24h === 'number' ? assetData.change_percentage_24h : 0;
-        let signal = 'HOLD';
-        let confidence = 50;
-        let reasoning = `Based on real market data for ${asset}`;
-
-        if (techData && typeof techData === 'object' && techData.signals) {
-          signal = techData.signals.action || 'HOLD';
-          confidence = typeof techData.signals.confidence === 'number' ? techData.signals.confidence : 50;
-          reasoning = Array.isArray(techData.signals.reasons) ? techData.signals.reasons.join(', ') : `Technical analysis for ${asset}`;
-        } else {
-          if (priceChange > 5) {
-            signal = 'BUY';
-            confidence = 70;
-            reasoning = `Strong upward momentum (+${priceChange.toFixed(1)}%)`;
-          } else if (priceChange < -5) {
-            signal = 'SELL';
-            confidence = 70;
-            reasoning = `Significant decline (${priceChange.toFixed(1)}%)`;
-          } else if (Math.abs(priceChange) < 0.5) {
-            signal = 'HOLD';
-            confidence = 60;
-            reasoning = `Stable price action (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(1)}%) - holding position`;
-          }
-        }
-
-        signals[asset] = { signal, confidence, reasoning };
+        signals[asset] = this.generateAssetSignal(asset, marketData, technicalData);
       } catch (error) {
         this.logger.warn(`Error generating action signal for ${asset}:`, error);
-        signals[asset] = {
-          signal: 'HOLD',
-          confidence: 20,
-          reasoning: `Error processing data for ${asset} - maintaining neutral position`
-        };
+        signals[asset] = this.createErrorSignal(asset);
       }
     });
 
     return signals;
+  }
+
+  private generateAssetSignal(asset: string, marketData: any[], technicalData: any): any {
+    const assetData = Array.isArray(marketData) ? marketData.find(d => d && d.symbol === asset) : null;
+    const techData = technicalData && typeof technicalData === 'object' ? technicalData[asset] : null;
+
+    if (!assetData || typeof assetData !== 'object') {
+      return this.createNoDataSignal(asset);
+    }
+
+    if (techData && typeof techData === 'object' && techData.signals) {
+      return this.createTechnicalSignal(asset, techData);
+    }
+
+    return this.createPriceBasedSignal(asset, assetData);
+  }
+
+  private createNoDataSignal(asset: string): any {
+    return {
+      signal: 'HOLD',
+      confidence: 25,
+      reasoning: `No real-time market data available for ${asset} - maintaining neutral position`
+    };
+  }
+
+  private createTechnicalSignal(asset: string, techData: any): any {
+    const signal = techData.signals.action || 'HOLD';
+    const confidence = typeof techData.signals.confidence === 'number' ? techData.signals.confidence : 50;
+    const reasoning = Array.isArray(techData.signals.reasons) ?
+      techData.signals.reasons.join(', ') :
+      `Technical analysis for ${asset}`;
+
+    return { signal, confidence, reasoning };
+  }
+
+  private createPriceBasedSignal(asset: string, assetData: any): any {
+    const priceChange = typeof assetData.change_percentage_24h === 'number' ? assetData.change_percentage_24h : 0;
+
+    if (priceChange > 5) {
+      return {
+        signal: 'BUY',
+        confidence: 70,
+        reasoning: `Strong upward momentum (+${priceChange.toFixed(1)}%)`
+      };
+    }
+
+    if (priceChange < -5) {
+      return {
+        signal: 'SELL',
+        confidence: 70,
+        reasoning: `Significant decline (${priceChange.toFixed(1)}%)`
+      };
+    }
+
+    if (Math.abs(priceChange) < 0.5) {
+      return {
+        signal: 'HOLD',
+        confidence: 60,
+        reasoning: `Stable price action (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(1)}%) - holding position`
+      };
+    }
+
+    return {
+      signal: 'HOLD',
+      confidence: 50,
+      reasoning: `Based on real market data for ${asset}`
+    };
+  }
+
+  private createErrorSignal(asset: string): any {
+    return {
+      signal: 'HOLD',
+      confidence: 20,
+      reasoning: `Error processing data for ${asset} - maintaining neutral position`
+    };
   }
 
   private async handleAnalyzeFinancialNews(args: any): Promise<MCPToolResponse> {
@@ -653,7 +1010,7 @@ export class MCPOracleServer {
 
     try {
       if (!this.newsService) {
-        throw new Error('News service not initialized - cannot fetch real news');
+        return this.createErrorResponse('News service not initialized - news analysis unavailable. Please configure NEWSAPI_KEY and CRYPTOPANIC_API_KEY environment variables.');
       }
 
       // Fetch REAL news data from all sources
@@ -675,12 +1032,15 @@ export class MCPOracleServer {
       let aiAnalysis: any = null;
       if (this.aiService && realNewsData.length > 0) {
         try {
-          aiAnalysis = await this.aiService.analyzeNewsSentiment({
+          const analysisResult = await this.aiService.analyzeNewsSentiment({
             type: 'news_analysis',
-            data: realNewsData,
-            symbols: params.symbols,
+            data: { articles: realNewsData } as any,
+            symbols: params.symbols.map(s => s as any),
             depth: 'standard'
           });
+          if (analysisResult.success) {
+            aiAnalysis = analysisResult.data;
+          }
           this.logger.info(`🤖 AI news analysis completed using ${aiAnalysis.model_used}`);
         } catch (error) {
           this.logger.warn('⚠️ AI news analysis failed:', error);
@@ -704,7 +1064,7 @@ export class MCPOracleServer {
     }
   }
 
-  private processRealNewsData(symbols: string[], newsData: any[], hours: number) {
+  private processRealNewsData(symbols: string[], newsData: any[], _hours: number) {
     if (!Array.isArray(newsData) || newsData.length === 0) {
       const emptyMarketImpact: Record<string, any> = {};
       symbols.forEach(symbol => {
@@ -818,7 +1178,7 @@ export class MCPOracleServer {
     return (sentiment * 3 * volumeMultiplier);
   }
 
-  private buildNewsAnalysisResponse(params: any, newsData: any[], analysis: any, aiAnalysis: any): string {
+  private buildNewsAnalysisResponse(params: any, _newsData: any[], analysis: any, aiAnalysis: any): string {
     // Safely destructure with fallbacks to prevent undefined errors
     const sentiment = analysis?.sentiment || { overall: 0, credibility: 0 };
     const marketImpact = analysis?.marketImpact || {};
@@ -918,15 +1278,16 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
     this.logger.info(`📊 Using REAL AlphaVantage + CoinGecko data for ${params.symbol} ${params.days}-day forecast`);
 
     try {
-      if (!this.coinGecko || !this.technicalService) {
-        throw new Error('Required services not initialized - cannot generate real forecast');
+      // Check for at least CoinGecko service (basic requirement)
+      if (!this.coinGecko) {
+        return this.createErrorResponse('CoinGecko service not initialized - market data unavailable for forecasting. Please ensure API access is configured.');
       }
 
       // Fetch REAL market and technical data in parallel
       const [currentPriceResult, historicalDataResult, technicalAnalysisResult] = await Promise.allSettled([
-        this.coinGecko.getSinglePrice(params.symbol),
-        this.coinGecko.getPriceHistory(params.symbol, 90), // More data for better analysis
-        this.technicalService.getComprehensiveAnalysis(params.symbol)
+        this.coinGecko!.getSinglePrice(params.symbol),
+        this.coinGecko!.getPriceHistory(params.symbol, 90), // More data for better analysis
+        this.technicalService?.getComprehensiveAnalysis(params.symbol) || Promise.resolve(null)
       ]);
 
       // Extract real data
@@ -948,17 +1309,20 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
       let aiAnalysis: any = null;
       if (this.aiService) {
         try {
-          aiAnalysis = await this.aiService.generateForecast({
+          const analysisResult = await this.aiService.generateForecast({
             type: 'forecast',
             data: {
               currentPrice,
               historicalData,
-              technicalData: technicalAnalysis,
-              fundamentals: { symbol: params.symbol, timeframe: params.days }
+              technicalData: (technicalAnalysis as unknown) as Record<string, unknown> || {},
+              fundamentals: { symbol: params.symbol as any, timeframe: params.days }
             },
-            symbols: [params.symbol],
+            symbols: [params.symbol as any],
             depth: 'comprehensive'
           });
+          if (analysisResult.success) {
+            aiAnalysis = analysisResult.data;
+          }
           this.logger.info(`🤖 AI forecast analysis completed using ${aiAnalysis.model_used}`);
         } catch (error) {
           this.logger.warn('⚠️ AI forecast analysis failed:', error);
@@ -1117,6 +1481,7 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
     const oldest = recentPrices[recentPrices.length - 1];
     const newest = recentPrices[0];
 
+    if (!oldest || !newest || oldest === 0) return 0;
     return (newest - oldest) / oldest;
   }
 
@@ -1316,15 +1681,6 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
 
 
 
-  // Market analysis helper methods
-  private calculateSentimentFromNews(newsData: any[]): any[] {
-    return newsData.map(article => ({
-      symbol: article.symbol || 'GENERAL',
-      sentiment_score: article.sentiment || 0.5,
-      confidence: article.relevance || 0.5,
-      source: article.source || 'Unknown'
-    }));
-  }
 
 
 
@@ -1333,30 +1689,6 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
 
 
 
-
-  private getBollingerPosition(bollinger: any): string {
-    if (!bollinger || !bollinger.upper || !bollinger.lower) return 'No data';
-    // This is simplified - in real implementation, we'd need current price
-    return 'Middle band consolidation';
-  }
-
-  private calculateTrend(indicators: any): string {
-    if (!indicators) return 'No technical data available';
-
-    let bullishSignals = 0;
-    let bearishSignals = 0;
-
-    if (indicators.rsi > 70) bearishSignals++;
-    if (indicators.rsi < 30) bullishSignals++;
-    if (indicators.rsi >= 50 && indicators.rsi <= 70) bullishSignals++;
-
-    if (indicators.macd?.value > 0) bullishSignals++;
-    if (indicators.macd?.value < 0) bearishSignals++;
-
-    if (bullishSignals > bearishSignals) return 'Upward momentum building';
-    if (bearishSignals > bullishSignals) return 'Downward pressure increasing';
-    return 'Sideways consolidation pattern';
-  }
 
   // News analysis helper methods
 
@@ -1366,7 +1698,7 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
   private generateFallbackForecast(
     symbol: string,
     currentPrice: number,
-    days: number,
+    _days: number,
     technicalAnalysis: any,
     aiAnalysis: any
   ): any {
@@ -1428,13 +1760,73 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
     this.expressApp = express();
     this.httpServer = createServer(this.expressApp);
 
-    // Middleware
-    this.expressApp.use(helmet());
-    this.expressApp.use(cors());
-    this.expressApp.use(express.json({ limit: '10mb' }));
+    // Security and rate limiting middleware
+    this.expressApp.use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          scriptSrc: ["'self'"]
+        }
+      }
+    }));
+
+    this.expressApp.use(cors({
+      origin: process.env['ALLOWED_ORIGINS']?.split(',') || '*',
+      methods: ['GET', 'POST', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+      exposedHeaders: ['X-RateLimit-Limit', 'X-RateLimit-Remaining'],
+      credentials: false,
+      maxAge: 86400,
+      preflightContinue: false,
+      optionsSuccessStatus: 200
+    }));
+
+    // Rate limiting
+    const limiter = rateLimit({
+      windowMs: 1 * 60 * 1000, // 1 minute
+      max: 100, // More reasonable limit: 100 requests per minute per IP
+      message: {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32000,
+          message: "Too many requests, please try again later"
+        }
+      },
+      standardHeaders: true,
+      legacyHeaders: false,
+      keyGenerator: (req) => ipKeyGenerator(req.ip || 'unknown'),
+      handler: (req, res) => {
+        this.logger.warn(`Rate limit exceeded for IP: ${req.ip}`);
+        res.status(429).json({
+          jsonrpc: "2.0",
+          id: null,
+          error: {
+            code: -32000,
+            message: "Too many requests, please try again later"
+          }
+        });
+      }
+    });
+
+    this.expressApp.use(limiter);
+    this.expressApp.use(express.json({
+      limit: '100kb', // Stricter size limit
+      strict: true,
+      type: ['application/json'],
+      verify: (req, res, buf) => {
+        // Additional validation for request size
+        if (buf.length > 102400) { // 100KB
+          const error = new Error('Request entity too large');
+          (error as any).status = 413;
+          throw error;
+        }
+      }
+    }));
 
     // Health check
-    this.expressApp.get('/health', (req, res) => {
+    this.expressApp.get('/health', (_req, res) => {
       res.json({ status: 'healthy', timestamp: new Date().toISOString() });
     });
 
@@ -1473,14 +1865,31 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
     });
 
     // MCP protocol endpoint for JSON-RPC requests
-    this.expressApp.post('/mcp', async (req, res) => {
+    this.expressApp.post('/mcp', this.validateJsonRpcRequest.bind(this), async (req, res) => {
       try {
         const { method, params, id } = req.body;
 
         let response: any;
 
         switch (method) {
-          case 'tools/list':
+          case 'initialize': {
+            response = {
+              protocolVersion: "2024-11-05",
+              capabilities: {
+                tools: {},
+                resources: {},
+                prompts: {},
+                logging: {}
+              },
+              serverInfo: {
+                name: "mcp-oracle",
+                version: "1.0.0"
+              }
+            };
+            break;
+          }
+
+          case 'tools/list': {
             response = {
               tools: [
                 {
@@ -1550,20 +1959,24 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
               ]
             };
             break;
+          }
 
-          case 'tools/call':
+          case 'tools/call': {
             const { name, arguments: args } = params;
+
+            // Validate tool parameters
+            const validatedArgs = this.validateToolParams(name, args);
             let toolResult: MCPToolResponse;
 
             switch (name) {
               case 'getSmartMarketPulse':
-                toolResult = await this.handleGetSmartMarketPulse(args);
+                toolResult = await this.handleGetSmartMarketPulse(validatedArgs);
                 break;
               case 'analyzeFinancialNews':
-                toolResult = await this.handleAnalyzeFinancialNews(args);
+                toolResult = await this.handleAnalyzeFinancialNews(validatedArgs);
                 break;
               case 'getMarketForecast':
-                toolResult = await this.handleGetMarketForecast(args);
+                toolResult = await this.handleGetMarketForecast(validatedArgs);
                 break;
               default:
                 throw new Error(`Unknown tool: ${name}`);
@@ -1574,6 +1987,189 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
               isError: toolResult.isError || false
             };
             break;
+          }
+
+          case 'resources/list': {
+            response = {
+              resources: [
+                {
+                  uri: "market-data://current",
+                  name: "Current Market Data",
+                  description: "Real-time market data for supported assets",
+                  mimeType: "application/json"
+                },
+                {
+                  uri: "news://financial",
+                  name: "Financial News",
+                  description: "Latest financial news and analysis",
+                  mimeType: "application/json"
+                },
+                {
+                  uri: "analysis://patterns",
+                  name: "Market Patterns",
+                  description: "Historical market patterns and insights",
+                  mimeType: "application/json"
+                }
+              ]
+            };
+            break;
+          }
+
+          case 'resources/read': {
+            const { uri } = this.resourceRequestSchema.parse(params);
+
+            switch (true) {
+              case uri.startsWith("market-data://"): {
+                const uriPart = uri.split("//")[1];
+                const symbols = uriPart === "current" ? ["BTC", "ETH"] : (uriPart ? [uriPart] : ["BTC", "ETH"]);
+                const marketData = await this.coinGecko?.getDetailedMarketData(symbols);
+                response = {
+                  contents: [{
+                    uri,
+                    mimeType: "application/json",
+                    text: JSON.stringify(marketData, null, 2)
+                  }]
+                };
+                break;
+              }
+
+              case uri.startsWith("news://"): {
+                const newsData = await this.newsService?.getAggregatedNews(["BTC", "ETH"], 24);
+                response = {
+                  contents: [{
+                    uri,
+                    mimeType: "application/json",
+                    text: JSON.stringify(newsData, null, 2)
+                  }]
+                };
+                break;
+              }
+
+              case uri.startsWith("analysis://"): {
+                const analysisData = { patterns: "Market pattern analysis would go here" };
+                response = {
+                  contents: [{
+                    uri,
+                    mimeType: "application/json",
+                    text: JSON.stringify(analysisData, null, 2)
+                  }]
+                };
+                break;
+              }
+
+              default:
+                throw new Error(`Unknown resource URI: ${uri}`);
+            }
+            break;
+          }
+
+          case 'prompts/list': {
+            response = {
+              prompts: [
+                {
+                  name: "market-analysis",
+                  description: "Generate comprehensive market analysis for specified assets",
+                  arguments: [
+                    {
+                      name: "assets",
+                      description: "Comma-separated list of asset symbols",
+                      required: true
+                    },
+                    {
+                      name: "timeframe",
+                      description: "Analysis timeframe (e.g., 24h, 7d, 30d)",
+                      required: false
+                    }
+                  ]
+                },
+                {
+                  name: "risk-assessment",
+                  description: "Assess investment risk for specified portfolio",
+                  arguments: [
+                    {
+                      name: "portfolio",
+                      description: "JSON object describing portfolio allocation",
+                      required: true
+                    }
+                  ]
+                },
+                {
+                  name: "news-summary",
+                  description: "Summarize recent financial news impact",
+                  arguments: [
+                    {
+                      name: "symbols",
+                      description: "Asset symbols to focus news analysis on",
+                      required: false
+                    }
+                  ]
+                }
+              ]
+            };
+            break;
+          }
+
+          case 'prompts/get': {
+            const { name, arguments: args } = this.promptRequestSchema.parse(params);
+
+            switch (name) {
+              case "market-analysis": {
+                const assets = args?.['assets'] || "BTC,ETH";
+                const timeframe = args?.['timeframe'] || "24h";
+                response = {
+                  description: `Market analysis for ${assets} over ${timeframe}`,
+                  messages: [
+                    {
+                      role: "user",
+                      content: {
+                        type: "text",
+                        text: `Analyze the market performance for ${assets} over the past ${timeframe}. Include price movements, volume trends, sentiment analysis, and provide actionable insights for investors.`
+                      }
+                    }
+                  ]
+                };
+                break;
+              }
+
+              case "risk-assessment": {
+                const portfolio = args?.['portfolio'] || "{}";
+                response = {
+                  description: "Portfolio risk assessment",
+                  messages: [
+                    {
+                      role: "user",
+                      content: {
+                        type: "text",
+                        text: `Assess the risk profile of this portfolio: ${portfolio}. Analyze diversification, volatility, correlation risks, and provide recommendations for risk mitigation.`
+                      }
+                    }
+                  ]
+                };
+                break;
+              }
+
+              case "news-summary": {
+                const symbols = args?.['symbols'] || "BTC,ETH,SPY";
+                response = {
+                  description: `News impact summary for ${symbols}`,
+                  messages: [
+                    {
+                      role: "user",
+                      content: {
+                        type: "text",
+                        text: `Summarize the recent financial news and its potential impact on ${symbols}. Focus on market-moving events and sentiment shifts.`
+                      }
+                    }
+                  ]
+                };
+                break;
+              }
+
+              default:
+                throw new Error(`Unknown prompt: ${name}`);
+            }
+            break;
+          }
 
           default:
             throw new Error(`Unknown method: ${method}`);
