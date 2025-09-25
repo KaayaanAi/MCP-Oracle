@@ -1,11 +1,11 @@
 # Multi-stage build for optimal image size
-# MCP Oracle v1.2.0 - Security hardened with 372+ lines of dead code removed
+# MCP Oracle v1.3.0 - Latest standards compliant with enhanced validation suite
 FROM node:22-alpine AS builder
 
 # Update system, install npm and build dependencies
 RUN apk update && apk upgrade && \
     npm install -g npm@latest && \
-    apk add --no-cache g++=12.2.1_git20220924-r10 make=4.3-r1 python3=3.11.10-r0
+    apk add --no-cache g++ make python3
 
 # Set working directory
 WORKDIR /app
@@ -31,7 +31,7 @@ RUN apk update && apk upgrade && \
     npm install -g npm@latest && \
     addgroup -g 1001 -S nodejs && \
     adduser -S mcp-oracle -u 1001 && \
-    apk add --no-cache curl=8.5.0-r0
+    apk add --no-cache curl
 
 # Set working directory
 WORKDIR /app

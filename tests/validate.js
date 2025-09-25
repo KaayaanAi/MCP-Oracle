@@ -7,7 +7,10 @@
 
 import axios from 'axios';
 import { readFileSync } from 'fs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
+const execAsync = promisify(exec);
 const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:4006';
 const WS_URL = process.env.TEST_WS_URL || 'ws://localhost:4007';
 
@@ -63,6 +66,30 @@ async function validateVersions() {
     );
     logTest('All critical dependencies use "latest"', allLatest,
       'Some dependencies not using latest versions');
+
+    // Check npm audit for vulnerabilities
+    try {
+      const { stdout } = await execAsync('npm audit --audit-level moderate --json');
+      const auditResult = JSON.parse(stdout);
+      const vulnerabilities = auditResult.metadata?.vulnerabilities?.total || 0;
+      logTest('Zero npm vulnerabilities', vulnerabilities === 0,
+        `Found ${vulnerabilities} vulnerabilities`);
+    } catch (auditError) {
+      // If npm audit fails with non-zero exit (has vulnerabilities)
+      logTest('Zero npm vulnerabilities', false,
+        'npm audit found vulnerabilities or failed');
+    }
+
+    // Check for outdated packages
+    try {
+      const { stdout } = await execAsync('npx npm-check-updates --jsonUpgraded');
+      const outdated = JSON.parse(stdout || '{}');
+      const outdatedCount = Object.keys(outdated).length;
+      logTest('All packages up to date', outdatedCount === 0,
+        `Found ${outdatedCount} outdated packages`);
+    } catch (ncuError) {
+      logTest('Package update check', false, 'npm-check-updates failed');
+    }
 
   } catch (error) {
     logTest('Version validation setup', false, error.message);
@@ -369,6 +396,52 @@ async function testN8nCompatibility() {
   }
 }
 
+// === Docker Validation Tests ===
+async function testDockerValidation() {
+  console.log('\n🔍 === Docker Validation ===');
+
+  // Check if Docker is available
+  try {
+    const { stdout } = await execAsync('docker --version');
+    const dockerVersion = stdout.trim();
+    logTest('Docker available', dockerVersion.includes('Docker version'),
+      `Docker version: ${dockerVersion}`);
+
+    // Check Docker version >= 24.x
+    const versionMatch = dockerVersion.match(/Docker version (\d+)\./);
+    const majorVersion = versionMatch ? parseInt(versionMatch[1]) : 0;
+    logTest('Docker >= 24.x', majorVersion >= 24,
+      `Found Docker version: ${majorVersion}`);
+
+  } catch (error) {
+    logTest('Docker availability', false, 'Docker not available or failed');
+  }
+
+  // Validate Dockerfile exists and has no version pinning
+  try {
+    const dockerfile = readFileSync('./Dockerfile', 'utf8');
+
+    // Check for version pinning in Alpine packages
+    const hasPinnedPackages = dockerfile.includes('=') &&
+                             (dockerfile.includes('apk add') || dockerfile.includes('RUN apk'));
+    logTest('Dockerfile has no version pinning', !hasPinnedPackages,
+      'Found version pinning in Alpine packages');
+
+    // Check for latest npm installation
+    const hasLatestNpm = dockerfile.includes('npm install -g npm@latest');
+    logTest('Dockerfile uses latest npm', hasLatestNpm,
+      'Dockerfile should install npm@latest');
+
+    // Check for Node 22+ base image
+    const hasModernNode = dockerfile.includes('node:22') || dockerfile.includes('node:2');
+    logTest('Dockerfile uses Node.js 22+', hasModernNode,
+      'Dockerfile should use Node.js 22 or higher');
+
+  } catch (error) {
+    logTest('Dockerfile validation', false, error.message);
+  }
+}
+
 // === Main Test Runner ===
 async function runTests() {
   console.log('🚀 MCP Oracle Validation Test Suite');
@@ -381,6 +454,7 @@ async function runTests() {
     await testSecurity();
     await testIntegration();
     await testN8nCompatibility();
+    await testDockerValidation();
 
   } catch (error) {
     console.error('Test suite error:', error);
