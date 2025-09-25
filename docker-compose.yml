@@ -11,12 +11,12 @@ services:
     container_name: mcp-oracle
     restart: unless-stopped
     ports:
-      - "${PORT:-4006}:4006"
-      - "${WS_PORT:-4007}:4007"
+      - "${PORT:-4010}:4010"
+      - "${WS_PORT:-4011}:4011"
     environment:
       - NODE_ENV=production
-      - PORT=4006
-      - WS_PORT=4007
+      - PORT=4010
+      - WS_PORT=4011
       - REDIS_URL=${REDIS_URL}
       - MONGODB_URL=${MONGODB_URL}
       - LOG_LEVEL=${LOG_LEVEL:-info}

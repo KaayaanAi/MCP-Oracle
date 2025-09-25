@@ -57,7 +57,7 @@ RUN mkdir -p logs data && \
 USER mcp-oracle
 
 # Expose ports for MCP Oracle
-EXPOSE 4006 4007
+EXPOSE 4010 4011
 
 # Health check using Node.js script
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

@@ -29,9 +29,9 @@ Authorization: Bearer your_secure_api_key_here
 
 ## Base URLs
 
-- **HTTP**: `http://localhost:4006`
-- **WebSocket**: `ws://localhost:4007/ws`
-- **SSE**: `http://localhost:4006/sse`
+- **HTTP**: `http://localhost:4010`
+- **WebSocket**: `ws://localhost:4011/ws`
+- **SSE**: `http://localhost:4010/sse`
 
 ## Standards Compliance
 

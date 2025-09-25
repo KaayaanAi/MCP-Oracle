@@ -19,8 +19,8 @@ const defaultConfig: ServerConfig = {
     sse: process.argv.includes('--sse')
   },
   ports: {
-    http: parseInt(process.env['PORT'] || '4006'),
-    websocket: parseInt(process.env['WS_PORT'] || '4007')
+    http: parseInt(process.env['PORT'] || '4010'),
+    websocket: parseInt(process.env['WS_PORT'] || '4011')
   },
   ai: {
     providers: {
@@ -144,8 +144,8 @@ EXAMPLES:
   mcp-oracle --http --ws --sse  # Web protocols only
 
 ENVIRONMENT VARIABLES:
-  PORT                HTTP server port (default: 4006)
-  WS_PORT             WebSocket server port (default: 4007)
+  PORT                HTTP server port (default: 4010)
+  WS_PORT             WebSocket server port (default: 4011)
   REDIS_URL           Redis connection URL
   MONGODB_URL         MongoDB connection URL
   GROQ_API_KEY        Groq API key for quick analysis

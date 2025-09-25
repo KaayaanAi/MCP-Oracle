@@ -25,7 +25,7 @@
 | Protocol | Status | Details |
 |----------|---------|---------|
 | **STDIO** | ✅ PASS | MCP protocol handshake working |
-| **HTTP** | ✅ PASS | Server starts on port 4006 |
+| **HTTP** | ✅ PASS | Server starts on port 4010 |
 | **WebSocket** | ✅ PASS | WebSocket server initializes |
 | **SSE** | ✅ PASS | Server-Sent Events endpoint ready |
 | **Health Check** | ✅ PASS | `/health` endpoint responds correctly |
@@ -180,7 +180,7 @@ npm run audit        # Security audit
 ### Environment Configuration
 ```env
 # Critical for production
-PORT=4006
+PORT=4010
 NODE_ENV=production
 LOG_LEVEL=warn
 
@@ -207,7 +207,7 @@ REDIS_URL=redis://localhost:6379
 npm run build
 
 # Start production server
-npm start                    # HTTP on port 4006
+npm start                    # HTTP on port 4010
 npm run start:stdio         # STDIO protocol
 npm run start:http          # HTTP only
 npm run start:ws            # WebSocket only

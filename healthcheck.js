@@ -7,7 +7,7 @@
 
 import http from 'http';
 
-const PORT = process.env.PORT || 4006;
+const PORT = process.env.PORT || 4010;
 
 const options = {
   hostname: 'localhost',

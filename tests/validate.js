@@ -11,8 +11,8 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
-const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:4006';
-const WS_URL = process.env.TEST_WS_URL || 'ws://localhost:4007';
+const BASE_URL = process.env.TEST_BASE_URL || 'http://localhost:4010';
+const WS_URL = process.env.TEST_WS_URL || 'ws://localhost:4011';
 
 // Test results tracking
 const results = {

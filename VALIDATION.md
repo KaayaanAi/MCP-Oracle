@@ -85,7 +85,7 @@ npm run healthcheck
 
 | Endpoint | Maximum Response Time | Test Command |
 |----------|----------------------|-------------|
-| `/health` | < 200ms | `curl -w "@curl-format.txt" http://localhost:4006/health` |
+| `/health` | < 200ms | `curl -w "@curl-format.txt" http://localhost:4010/health` |
 | `tools/list` | < 1 second | Included in `npm test` |
 | `initialize` | < 500ms | Included in `npm test` |
 | `tools/call` | < 30 seconds | Depends on operation complexity |
@@ -104,21 +104,21 @@ npm run healthcheck
 
 ```bash
 # 1. Input validation test
-curl -X POST http://localhost:4006/mcp \
+curl -X POST http://localhost:4010/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"test","arguments":{"invalid":"data"}},"id":1}'
 # Expected: 400 error response
 
 # 2. Rate limiting test
 for i in {1..20}; do
-  curl -X POST http://localhost:4006/mcp \
+  curl -X POST http://localhost:4010/mcp \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"tools/list","id":'$i'}' &
 done
 # Expected: Some requests should be rate limited
 
 # 3. Request size limit test
-curl -X POST http://localhost:4006/mcp \
+curl -X POST http://localhost:4010/mcp \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"tools/list","params":{"large":"'$(python3 -c "print('x'*2000000)")'}","id":1}'
 # Expected: 413 Request Entity Too Large
@@ -140,7 +140,7 @@ curl -X POST http://localhost:4006/mcp \
 
 ```bash
 # Test n8n MCP Client compatibility
-curl -X POST http://localhost:4006/mcp \
+curl -X POST http://localhost:4010/mcp \
   -H "Content-Type: application/json" \
   -H "User-Agent: n8n" \
   -d '{"jsonrpc":"2.0","method":"tools/list","id":"n8n-test"}'
@@ -174,7 +174,7 @@ docker build -t mcp-oracle-test .
 docker images mcp-oracle-test
 
 # Test container startup
-docker run -d -p 4006:4006 -p 4007:4007 mcp-oracle-test
+docker run -d -p 4010:4010 -p 4011:4011 mcp-oracle-test
 
 # Verify health check
 docker ps --filter "health=healthy"
@@ -188,7 +188,7 @@ docker ps --filter "health=healthy"
 - [x] Latest npm installation
 - [x] No version pinning in Alpine packages
 - [x] Health check implementation
-- [x] Proper port exposure (4006, 4007)
+- [x] Proper port exposure (4010, 4011)
 
 ## 🎯 Success Criteria
 
