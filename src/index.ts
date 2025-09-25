@@ -69,7 +69,7 @@ const defaultConfig: ServerConfig = {
     redis_url: process.env['REDIS_URL'] || 'redis://:password@redis:6379'
   },
   memory: {
-    mongodb_url: process.env['MONGODB_URL'] || 'mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle',
+    mongodb_url: process.env['MONGODB_URL'] || 'mongodb://localhost:27017/mcp_oracle',
     database_name: 'mcp_oracle'
   }
 };
@@ -105,13 +105,14 @@ function parseArgs(): { config: ServerConfig; help: boolean } {
       case '-h':
         help = true;
         break;
-      case '--port':
+      case '--port': {
         const portIndex = args.indexOf(arg);
         const portValue = args[portIndex + 1];
         if (portValue && !isNaN(parseInt(portValue))) {
           config.ports.http = parseInt(portValue);
         }
         break;
+      }
     }
   }
 

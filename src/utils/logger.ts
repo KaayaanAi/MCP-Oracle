@@ -33,7 +33,49 @@ export const createLogger = (serviceName: string): winston.Logger => {
       winston.format.timestamp(),
       winston.format.errors({ stack: true }),
       winston.format.printf(({ timestamp, level, message, service, ...meta }) => {
-        const metaStr = Object.keys(meta).length ? JSON.stringify(meta) : '';
+        let metaStr = '';
+        if (Object.keys(meta).length) {
+          try {
+            // Safe JSON stringification to avoid circular references
+            metaStr = JSON.stringify(meta, (key, value) => {
+              if (value === null) return null;
+              if (typeof value === 'undefined') return '[Undefined]';
+              if (typeof value === 'function') return '[Function]';
+              if (value instanceof Error) {
+                return {
+                  name: value.name,
+                  message: value.message,
+                  stack: value.stack?.split('\n').slice(0, 3).join('\n') // Limit stack trace
+                };
+              }
+              if (typeof value === 'object' && value !== null) {
+                // Handle potential circular references and large objects
+                if (value.constructor) {
+                  const constructorName = value.constructor.name;
+                  if (constructorName === 'IncomingMessage' ||
+                      constructorName === 'TLSSocket' ||
+                      constructorName === 'HTTPParser' ||
+                      constructorName === 'Socket' ||
+                      key === 'request' || key === 'response') {
+                    return `[${constructorName}]`;
+                  }
+                }
+                // Prevent deeply nested objects from causing issues
+                try {
+                  const stringified = JSON.stringify(value);
+                  if (stringified && stringified.length > 1000) {
+                    return '[Large Object]';
+                  }
+                } catch {
+                  return '[Circular Reference]';
+                }
+              }
+              return value;
+            });
+          } catch {
+            metaStr = '[Circular Reference Detected]';
+          }
+        }
         return `${timestamp} [${service}] ${level}: ${message} ${metaStr}`;
       })
     ),

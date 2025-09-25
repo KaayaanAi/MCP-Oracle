@@ -88,8 +88,8 @@ export interface AIServiceResponse {
 export class AIService {
   private groqClient: AxiosInstance;
   private openaiClient: AxiosInstance;
-  private readonly groqApiKey: string;
-  private readonly openaiApiKey: string;
+  private readonly _groqApiKey: string; // Stored for potential future use
+  private readonly _openaiApiKey: string; // Stored for potential future use
   private groqModel: string;
   private openaiModel: string;
   private openaiComprehensiveModel: string;
@@ -102,8 +102,8 @@ export class AIService {
     openaiModel: string = 'gpt-5-nano',
     openaiComprehensiveModel: string = 'gpt-4o'
   ) {
-    this.groqApiKey = groqApiKey;
-    this.openaiApiKey = openaiApiKey;
+    this._groqApiKey = groqApiKey;
+    this._openaiApiKey = openaiApiKey;
     this.groqModel = groqModel;
     this.openaiModel = openaiModel;
     this.openaiComprehensiveModel = openaiComprehensiveModel;
@@ -456,7 +456,7 @@ NEWS DATA:
 ${JSON.stringify(((data as any).newsData as any[])?.slice(0, 10), null, 2)}
 
 TECHNICAL DATA:
-${JSON.stringify((data as any).technicalData, null, 2)}
+${this.formatTechnicalData((data as any).technicalData)}
 
 SENTIMENT DATA:
 ${JSON.stringify((data as any).sentimentData, null, 2)}
@@ -512,7 +512,7 @@ HISTORICAL PRICE DATA:
 ${JSON.stringify(((data as any).historicalData as any[])?.slice(0, 30), null, 2)}
 
 CURRENT TECHNICAL INDICATORS:
-${JSON.stringify((data as any).technicalData, null, 2)}
+${this.formatTechnicalData((data as any).technicalData)}
 
 MARKET FUNDAMENTALS:
 ${JSON.stringify((data as any).fundamentals, null, 2)}
@@ -567,20 +567,38 @@ Focus on:
     reasoning: string[];
   } {
     try {
-      // Try to extract JSON from the response
+      // Try to extract JSON from the response with better error handling
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return {
-          summary: parsed.summary || 'AI analysis completed',
-          insights: parsed.insights || ['Analysis insights generated'],
-          recommendations: parsed.recommendations || ['Recommendations provided'],
-          confidence: parsed.confidence || 75,
-          reasoning: parsed.reasoning || ['AI reasoning provided']
-        };
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+
+          // Validate and sanitize the parsed data
+          const sanitizedResponse = {
+            summary: this.sanitizeString(parsed.summary) || 'AI analysis completed',
+            insights: this.sanitizeArray(parsed.insights) || ['Analysis insights generated'],
+            recommendations: this.sanitizeArray(parsed.recommendations) || ['Recommendations provided'],
+            confidence: this.sanitizeNumber(parsed.confidence, 75, 0, 100),
+            reasoning: this.sanitizeArray(parsed.reasoning) || ['AI reasoning provided']
+          };
+
+          this.logger.debug('Successfully parsed AI response JSON');
+          return sanitizedResponse;
+
+        } catch (parseError) {
+          this.logger.warn('JSON parsing failed, attempting manual extraction:', {
+            error: parseError instanceof Error ? parseError.message : 'Unknown parse error',
+            contentLength: content.length
+          });
+        }
+      } else {
+        this.logger.debug('No JSON structure found in AI response, using text extraction');
       }
     } catch (error) {
-      this.logger.warn('Failed to parse JSON from AI response, using fallback parsing');
+      this.logger.warn('Failed to parse JSON from AI response, using fallback parsing:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        contentPreview: content.substring(0, 100)
+      });
     }
 
     // Fallback parsing if JSON extraction fails
@@ -612,6 +630,52 @@ Focus on:
     }
 
     return bulletPoints.slice(0, 5); // Limit to 5 points
+  }
+
+  /**
+   * Sanitize string input to prevent injection and ensure valid data
+   */
+  private sanitizeString(input: any): string | null {
+    if (typeof input !== 'string') return null;
+
+    // Remove potentially dangerous characters and limit length
+    const sanitized = input
+      .split('')
+      .filter(char => {
+        const code = char.charCodeAt(0);
+        return code >= 32 && code !== 127; // Keep printable characters, exclude DEL
+      })
+      .join('')
+      .trim()
+      .substring(0, 1000); // Limit to 1000 chars
+
+    return sanitized.length > 0 ? sanitized : null;
+  }
+
+  /**
+   * Sanitize array input to ensure it's a valid array of strings
+   */
+  private sanitizeArray(input: any): string[] | null {
+    if (!Array.isArray(input)) return null;
+
+    const sanitized = input
+      .filter(item => typeof item === 'string')
+      .map(item => this.sanitizeString(item))
+      .filter(item => item !== null)
+      .slice(0, 10); // Limit to 10 items
+
+    return sanitized.length > 0 ? sanitized as string[] : null;
+  }
+
+  /**
+   * Sanitize number input with bounds checking
+   */
+  private sanitizeNumber(input: any, defaultValue: number, min: number = 0, max: number = 100): number {
+    const num = typeof input === 'number' ? input : parseFloat(input);
+
+    if (isNaN(num) || !isFinite(num)) return defaultValue;
+
+    return Math.min(max, Math.max(min, num));
   }
 
   async healthCheck(): Promise<boolean> {

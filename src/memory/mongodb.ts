@@ -90,23 +90,31 @@ export class MemoryLayer {
 
   constructor(connectionString?: string) {
     // Default to Docker-compatible MongoDB URL
-    this.connectionString = connectionString || process.env['MONGODB_URL'] || 'mongodb://kaayaan:KuwaitMongo2025!@mongodb:27017/mcp_oracle';
+    this.connectionString = connectionString || process.env['MONGODB_URL'] || 'mongodb://localhost:27017/mcp_oracle';
   }
 
   async initialize(): Promise<void> {
-    // Try to load MongoDB dynamically
+    // Try to load MongoDB dynamically with timeout
     if (!MongoClient) {
       try {
-        const mongodb = await import('mongodb');
+        const mongodb = await Promise.race([
+          import('mongodb'),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('MongoDB import timeout')), 5000)
+          )
+        ]) as any;
         MongoClient = mongodb.MongoClient;
+        this.logger.info('📦 MongoDB package loaded successfully');
       } catch (error) {
-        this.logger.warn('📦 MongoDB not available, skipping initialization', { error });
+        this.logger.warn('📦 MongoDB package not available or timeout, skipping initialization:', {
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
         return;
       }
     }
 
     if (!MongoClient) {
-      this.logger.warn('📦 MongoDB client not loaded');
+      this.logger.warn('📦 MongoDB client not loaded - memory features disabled');
       return;
     }
 
@@ -120,31 +128,68 @@ export class MemoryLayer {
         this.logger.info(`🔧 Fixed MongoDB URL for Docker: ${fixedConnectionString.replace(/:\/\/[^@]+@/, '://***@')}`);
       }
 
+      // Create client with conservative timeouts to prevent blocking
       this.client = new MongoClient(fixedConnectionString, {
-        connectTimeoutMS: 10000,
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 45000,
-        maxPoolSize: 10,
-        retryWrites: true,
-        retryReads: true
+        connectTimeoutMS: 3000,      // Reduced from 10000
+        serverSelectionTimeoutMS: 2000, // Reduced from 5000
+        socketTimeoutMS: 5000,       // Reduced from 45000
+        maxPoolSize: 5,              // Reduced from 10
+        retryWrites: false,          // Disable to fail fast
+        retryReads: false,           // Disable to fail fast
+        maxIdleTimeMS: 30000,        // Close idle connections
+        heartbeatFrequencyMS: 10000  // Health check frequency
       });
 
-      await this.client.connect();
+      // Connect with timeout wrapper
+      await Promise.race([
+        this.client.connect(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('MongoDB connection timeout')), 4000)
+        )
+      ]);
 
-      // Test the connection
-      await this.client.db('admin').command({ ping: 1 });
+      // Test the connection with timeout
+      await Promise.race([
+        this.client.db('admin').command({ ping: 1 }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('MongoDB ping timeout')), 2000)
+        )
+      ]);
 
       this.db = this.client.db(this.dbName);
-
       this.patternsCollection = this.db.collection('market_patterns');
       this.priceHistoryCollection = this.db.collection('price_history');
       this.newsCacheCollection = this.db.collection('news_cache');
 
-      await this.createIndexes();
+      // Create indexes in background, don't wait
+      this.createIndexes().catch(error => {
+        this.logger.warn('⚠️ Index creation failed (non-blocking):', error);
+      });
+
       this.logger.info('✅ MongoDB MemoryLayer initialized successfully');
     } catch (error) {
-      this.logger.error('❌ Failed to initialize MongoDB:', error);
+      this.logger.error('❌ Failed to initialize MongoDB:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        connectionString: this.connectionString.replace(/:\/\/[^@]+@/, '://***@')
+      });
       this.logger.warn('⚠️ MongoDB features will be disabled - continuing without memory layer');
+
+      // Clean up partial connections
+      if (this.client) {
+        try {
+          await this.client.close();
+        } catch (closeError) {
+          this.logger.debug('Error closing failed MongoDB connection:', closeError);
+        }
+        this.client = undefined as any;
+      }
+
+      // Reset all collections to prevent partial state
+      this.db = undefined as any;
+      this.patternsCollection = undefined as any;
+      this.priceHistoryCollection = undefined as any;
+      this.newsCacheCollection = undefined as any;
+
       // Don't throw error - allow service to work without MongoDB
     }
   }

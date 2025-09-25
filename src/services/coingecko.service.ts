@@ -55,6 +55,13 @@ export class CoinGeckoService {
   private client: AxiosInstance;
   private baseUrl = 'https://api.coingecko.com/api/v3';
   private logger = loggers.coingecko;
+  private rateLimitCounter = 0;
+  private lastResetTime = Date.now();
+  private circuitBreakerFailures = 0;
+  private circuitBreakerLastFailTime = 0;
+  private readonly CIRCUIT_BREAKER_THRESHOLD = 5;
+  private readonly CIRCUIT_BREAKER_TIMEOUT = 60000; // 1 minute
+  private readonly RATE_LIMIT_PER_MINUTE = 100; // Conservative estimate
 
   constructor(apiKey: string) {
     const headers: any = {
@@ -104,10 +111,80 @@ export class CoinGeckoService {
   }
 
   /**
+   * Check circuit breaker state
+   */
+  private isCircuitBreakerOpen(): boolean {
+    if (this.circuitBreakerFailures >= this.CIRCUIT_BREAKER_THRESHOLD) {
+      const timeSinceLastFailure = Date.now() - this.circuitBreakerLastFailTime;
+      if (timeSinceLastFailure < this.CIRCUIT_BREAKER_TIMEOUT) {
+        return true;
+      } else {
+        // Reset circuit breaker after timeout
+        this.circuitBreakerFailures = 0;
+        this.logger.info('🔄 Circuit breaker reset - attempting reconnection');
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check and enforce rate limits
+   */
+  private async checkRateLimit(): Promise<void> {
+    const now = Date.now();
+    const minutesSinceReset = (now - this.lastResetTime) / 60000;
+
+    if (minutesSinceReset >= 1) {
+      // Reset counter every minute
+      this.rateLimitCounter = 0;
+      this.lastResetTime = now;
+    }
+
+    if (this.rateLimitCounter >= this.RATE_LIMIT_PER_MINUTE) {
+      const waitTime = 60000 - (now - this.lastResetTime);
+      this.logger.warn(`⏱️ Rate limit reached, waiting ${waitTime}ms`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      this.rateLimitCounter = 0;
+      this.lastResetTime = Date.now();
+    }
+
+    this.rateLimitCounter++;
+  }
+
+  /**
+   * Record circuit breaker failure
+   */
+  private recordFailure(): void {
+    this.circuitBreakerFailures++;
+    this.circuitBreakerLastFailTime = Date.now();
+    this.logger.warn(`🔴 Circuit breaker failure recorded (${this.circuitBreakerFailures}/${this.CIRCUIT_BREAKER_THRESHOLD})`);
+  }
+
+  /**
+   * Reset circuit breaker on successful request
+   */
+  private recordSuccess(): void {
+    if (this.circuitBreakerFailures > 0) {
+      this.logger.info('🟢 Circuit breaker reset - successful request');
+      this.circuitBreakerFailures = 0;
+    }
+  }
+
+  /**
    * Get current prices for cryptocurrencies
    */
   async getCurrentPrices(symbols: string[]): Promise<MarketData[]> {
+    // Check circuit breaker
+    if (this.isCircuitBreakerOpen()) {
+      const error = new Error('CoinGecko service circuit breaker is open - too many recent failures');
+      this.logger.error('🔴 Circuit breaker open, rejecting request');
+      throw error;
+    }
+
     try {
+      // Enforce rate limiting
+      await this.checkRateLimit();
+
       const coinIds = this.symbolsToCoinIds(symbols);
       this.logger.info(`🔍 Fetching REAL prices for: ${symbols.join(', ')} (${coinIds.join(', ')})`);
 
@@ -120,8 +197,12 @@ export class CoinGeckoService {
           page: 1,
           sparkline: false,
           price_change_percentage: '24h'
-        }
+        },
+        timeout: 15000 // Explicit timeout
       });
+
+      // Record successful request
+      this.recordSuccess();
 
       const marketData = response.data.map(coin => ({
         symbol: coin.symbol.toUpperCase(),
@@ -141,8 +222,14 @@ export class CoinGeckoService {
 
       return marketData;
     } catch (error) {
-      this.logger.error('❌ Failed to fetch real current prices:', error);
-      throw new Error('CoinGecko current prices API failed');
+      // Record failure for circuit breaker
+      this.recordFailure();
+
+      this.logger.error('❌ Failed to fetch real current prices:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        circuitBreakerFailures: this.circuitBreakerFailures
+      });
+      throw new Error(`CoinGecko current prices API failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -164,8 +251,9 @@ export class CoinGeckoService {
       const response = await this.client.get<CoinGeckoHistoricalData>(`/coins/${coinId}/market_chart`, {
         params: {
           vs_currency: 'usd',
-          days: days,
-          interval: days > 90 ? 'daily' : 'hourly'
+          days: days
+          // Removed interval parameter due to CoinGecko API plan limitations
+          // interval: days > 90 ? 'daily' : 'hourly'
         }
       });
 
@@ -200,8 +288,8 @@ export class CoinGeckoService {
       });
 
       const price = response.data[coinId]?.usd;
-      if (!price) {
-        throw new Error(`No price data found for ${symbol}`);
+      if (!price || typeof price !== 'number') {
+        throw new Error(`No price data found for ${symbol} (coinId: ${coinId})`);
       }
 
       this.logger.info(`✅ REAL price for ${symbol}: $${price.toLocaleString()}`);
@@ -269,10 +357,11 @@ export class CoinGeckoService {
   }
 
   /**
-   * Convert symbol to CoinGecko coin ID
+   * Convert symbol to CoinGecko coin ID with support for trading pairs
    */
   private symbolToCoinId(symbol: string): string {
     const symbolMap: Record<string, string> = {
+      // Standard cryptocurrency symbols
       'BTC': 'bitcoin',
       'ETH': 'ethereum',
       'BNB': 'binancecoin',
@@ -292,10 +381,74 @@ export class CoinGeckoService {
       'ICP': 'internet-computer',
       'APT': 'aptos',
       'STX': 'stacks',
-      'FIL': 'filecoin'
+      'FIL': 'filecoin',
+
+      // Trading pairs (USDT, BUSD, etc.) - extract base currency
+      'BTCUSDT': 'bitcoin',
+      'ETHUSDT': 'ethereum',
+      'BNBUSDT': 'binancecoin',
+      'XRPUSDT': 'ripple',
+      'SOLUSDT': 'solana',
+      'ADAUSDT': 'cardano',
+      'DOGEUSDT': 'dogecoin',
+      'AVAXUSDT': 'avalanche-2',
+      'TRXUSDT': 'tron',
+      'DOTUSDT': 'polkadot',
+      'MATICUSDT': 'matic-network',
+      'LINKUSDT': 'chainlink',
+      'UNIUSDT': 'uniswap',
+      'LTCUSDT': 'litecoin',
+      'BCHUSDT': 'bitcoin-cash',
+      'NEARUSDT': 'near',
+      'ICPUSDT': 'internet-computer',
+      'APTUSDT': 'aptos',
+      'STXUSDT': 'stacks',
+      'FILUSDT': 'filecoin',
+
+      // BUSD pairs
+      'BTCBUSD': 'bitcoin',
+      'ETHBUSD': 'ethereum',
+      'BNBBUSD': 'binancecoin',
+      'SOLBUSD': 'solana',
+
+      // Alternative naming
+      'BITCOIN': 'bitcoin',
+      'ETHEREUM': 'ethereum',
+      'SOLANA': 'solana',
+      'CARDANO': 'cardano'
     };
 
-    return symbolMap[symbol.toUpperCase()] || symbol.toLowerCase();
+    const upperSymbol = symbol.toUpperCase();
+
+    // Direct mapping first
+    if (symbolMap[upperSymbol]) {
+      return symbolMap[upperSymbol];
+    }
+
+    // Try to extract base currency from trading pairs
+    if (upperSymbol.endsWith('USDT')) {
+      const baseCurrency = upperSymbol.replace('USDT', '');
+      if (symbolMap[baseCurrency]) {
+        return symbolMap[baseCurrency];
+      }
+    }
+
+    if (upperSymbol.endsWith('BUSD')) {
+      const baseCurrency = upperSymbol.replace('BUSD', '');
+      if (symbolMap[baseCurrency]) {
+        return symbolMap[baseCurrency];
+      }
+    }
+
+    if (upperSymbol.endsWith('USD')) {
+      const baseCurrency = upperSymbol.replace('USD', '');
+      if (symbolMap[baseCurrency]) {
+        return symbolMap[baseCurrency];
+      }
+    }
+
+    // Fallback to lowercase
+    return symbol.toLowerCase();
   }
 
   /**

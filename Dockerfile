@@ -1,5 +1,5 @@
 # Multi-stage build for optimal image size
-# MCP Oracle v1.3.0 - Latest standards compliant with enhanced validation suite
+# MCP Oracle v1.3.1 - Production-hardened with bulletproof reliability
 FROM node:22-alpine AS builder
 
 # Update system, install npm and build dependencies
@@ -31,7 +31,8 @@ RUN apk update && apk upgrade && \
     npm install -g npm@latest && \
     addgroup -g 1001 -S nodejs && \
     adduser -S mcp-oracle -u 1001 && \
-    apk add --no-cache curl
+    apk add --no-cache dumb-init && \
+    rm -rf /var/cache/apk/*
 
 # Set working directory
 WORKDIR /app
@@ -62,5 +63,5 @@ EXPOSE 4006 4007
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD ["node", "healthcheck.js"]
 
-# Default command with updated ports
-CMD ["node", "build/index.js", "--http", "--ws", "--sse"]
+# Default command with dumb-init for proper signal handling
+CMD ["dumb-init", "node", "build/index.js", "--http", "--ws", "--sse"]

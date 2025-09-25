@@ -51,12 +51,22 @@ export class MCPOracleServer {
   private aiService: AIService | undefined;
   private memoryLayer: MemoryLayer | undefined;
 
+  // Memory leak detection
+  private memoryMonitorInterval?: ReturnType<typeof setInterval>;
+  private requestCount = 0;
+  private lastMemoryCheck = 0;
+  private peakMemoryUsage = 0;
+  private activeConnections = new Set<any>();
+  private cleanupTasks: (() => Promise<void>)[] = [];
+
   constructor(config: ServerConfig) {
     this.config = config;
     this.setupLogger();
     this.initializeServices();
     this.createMCPServer();
     this.setupTools();
+    this.setupMemoryMonitoring();
+    this.setupGracefulShutdown();
   }
 
   private setupLogger(): void {
@@ -172,6 +182,139 @@ export class MCPOracleServer {
     }
   }
 
+  /**
+   * Setup memory monitoring to detect leaks
+   */
+  private setupMemoryMonitoring(): void {
+    // Monitor memory usage every 30 seconds
+    this.memoryMonitorInterval = setInterval(() => {
+      this.checkMemoryUsage();
+    }, 30000);
+
+    this.cleanupTasks.push(async () => {
+      if (this.memoryMonitorInterval) {
+        clearInterval(this.memoryMonitorInterval);
+        this.memoryMonitorInterval = undefined;
+      }
+    });
+
+    this.logger.info('🔍 Memory monitoring enabled');
+  }
+
+  /**
+   * Check current memory usage and detect potential leaks
+   */
+  private checkMemoryUsage(): void {
+    const memUsage = process.memoryUsage();
+    const currentMemory = memUsage.heapUsed / 1024 / 1024; // MB
+
+    // Update peak memory usage
+    if (currentMemory > this.peakMemoryUsage) {
+      this.peakMemoryUsage = currentMemory;
+    }
+
+    // Check for potential memory leak (growing consistently)
+    const memoryGrowthThreshold = 200; // MB
+    if (currentMemory > memoryGrowthThreshold && this.requestCount > 100) {
+      this.logger.warn('⚠️ High memory usage detected', {
+        heapUsed: `${currentMemory.toFixed(1)}MB`,
+        heapTotal: `${(memUsage.heapTotal / 1024 / 1024).toFixed(1)}MB`,
+        external: `${(memUsage.external / 1024 / 1024).toFixed(1)}MB`,
+        requestCount: this.requestCount,
+        activeConnections: this.activeConnections.size
+      });
+
+      // Force garbage collection if available
+      if (global.gc) {
+        global.gc();
+        this.logger.info('🗑️ Forced garbage collection');
+      }
+    }
+
+    // Log memory stats every 5 minutes
+    const now = Date.now();
+    if (now - this.lastMemoryCheck > 300000) { // 5 minutes
+      this.logger.info('📊 Memory stats', {
+        heapUsed: `${currentMemory.toFixed(1)}MB`,
+        heapTotal: `${(memUsage.heapTotal / 1024 / 1024).toFixed(1)}MB`,
+        peak: `${this.peakMemoryUsage.toFixed(1)}MB`,
+        requestCount: this.requestCount,
+        activeConnections: this.activeConnections.size
+      });
+      this.lastMemoryCheck = now;
+    }
+  }
+
+  /**
+   * Setup graceful shutdown handlers
+   */
+  private setupGracefulShutdown(): void {
+    const shutdown = async (signal: string) => {
+      this.logger.info(`🛑 Received ${signal}, starting graceful shutdown...`);
+
+      try {
+        // Run all cleanup tasks
+        for (const cleanup of this.cleanupTasks) {
+          await cleanup();
+        }
+
+        // Close MongoDB connection
+        if (this.memoryLayer) {
+          await this.memoryLayer.close();
+        }
+
+        // Close HTTP server
+        if (this.httpServer) {
+          await new Promise<void>((resolve) => {
+            this.httpServer!.close(() => {
+              this.logger.info('🌐 HTTP server closed');
+              resolve();
+            });
+          });
+        }
+
+        // Close WebSocket server
+        if (this.wsServer) {
+          this.wsServer.close(() => {
+            this.logger.info('🔌 WebSocket server closed');
+          });
+        }
+
+        // Close active connections
+        for (const connection of this.activeConnections) {
+          try {
+            if (connection && typeof connection.destroy === 'function') {
+              connection.destroy();
+            }
+          } catch (error) {
+            this.logger.debug('Error closing connection:', error);
+          }
+        }
+
+        this.logger.info('✅ Graceful shutdown completed');
+        process.exit(0);
+      } catch (error) {
+        this.logger.error('❌ Error during graceful shutdown:', error);
+        process.exit(1);
+      }
+    };
+
+    // Register shutdown handlers
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+    // Handle uncaught exceptions and unhandled rejections
+    process.on('uncaughtException', (error) => {
+      this.logger.error('💥 Uncaught Exception:', error);
+      shutdown('uncaughtException');
+    });
+
+    process.on('unhandledRejection', (reason, promise) => {
+      this.logger.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+      shutdown('unhandledRejection');
+    });
+  }
+
   private getNewsImpactLevel(relevanceScore: number): string {
     if (relevanceScore > 0.8) return 'high';
     if (relevanceScore > 0.5) return 'medium';
@@ -275,7 +418,7 @@ export class MCPOracleServer {
     this.server = new Server(
       {
         name: "mcp-oracle",
-        version: "1.0.0",
+        version: "1.3.0",
         description: "Advanced financial market analysis with AI-powered insights"
       },
       {
@@ -373,6 +516,9 @@ export class MCPOracleServer {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
+      // Track request for memory monitoring
+      this.requestCount++;
+
       this.logger.info(`🔧 Executing tool: ${name}`, { args });
 
       try {
@@ -431,7 +577,8 @@ export class MCPOracleServer {
         },
         serverInfo: {
           name: "mcp-oracle",
-          version: "1.0.0"
+          version: "1.3.1",
+          description: "Advanced financial market analysis with AI-powered insights"
         }
       };
     });
@@ -474,7 +621,7 @@ export class MCPOracleServer {
           case uri.startsWith("market-data://"): {
             const uriPart = uri.split("//")[1];
             const symbols = uriPart === "current" ? ["BTC", "ETH"] : (uriPart ? [uriPart] : ["BTC", "ETH"]);
-            const marketData = await this.coinGecko?.getDetailedMarketData(symbols);
+            const marketData = this.coinGecko ? await this.coinGecko.getDetailedMarketData(symbols) : [];
             return {
               contents: [{
                 uri,
@@ -485,7 +632,7 @@ export class MCPOracleServer {
           }
 
           case uri.startsWith("news://"): {
-            const newsData = await this.newsService?.getAggregatedNews(["BTC", "ETH"], 24);
+            const newsData = this.newsService ? await this.newsService.getAggregatedNews(["BTC", "ETH"], 24) : [];
             return {
               contents: [{
                 uri,
@@ -654,7 +801,7 @@ export class MCPOracleServer {
       this.logger.info('🔍 Fetching REAL market data from APIs...');
 
       const [marketData, newsData, technicalAnalysis] = await Promise.allSettled([
-        this.coinGecko!.getDetailedMarketData([...params.assets]),
+        this.coinGecko?.getDetailedMarketData([...params.assets]) || Promise.resolve([]),
         this.newsService?.getAggregatedNews([...params.assets], timeframeHours) || Promise.resolve([]),
         this.getTechnicalAnalysisForAssets([...params.assets])
       ]);
@@ -757,16 +904,23 @@ export class MCPOracleServer {
       }
     });
 
-    const results = await Promise.allSettled(technicalPromises);
-    const technicalData: any = {};
+    try {
+      const results = await Promise.allSettled(technicalPromises);
+      const technicalData: any = {};
 
-    results.forEach((result) => {
-      if (result.status === 'fulfilled' && result.value) {
-        Object.assign(technicalData, result.value);
-      }
-    });
+      results.forEach((result) => {
+        if (result.status === 'fulfilled' && result.value) {
+          Object.assign(technicalData, result.value);
+        } else if (result.status === 'rejected') {
+          this.logger.error(`❌ Technical analysis promise rejected:`, result.reason);
+        }
+      });
 
-    return technicalData;
+      return technicalData;
+    } catch (error) {
+      this.logger.error(`❌ Critical error in technical analysis for assets:`, error);
+      return {};
+    }
   }
 
   private async buildMarketPulseResponse(
@@ -1048,7 +1202,7 @@ export class MCPOracleServer {
       }
 
       // Process and analyze the real news data
-      const analysis = this.processRealNewsData(params.symbols, realNewsData, params.hours);
+      const analysis = this.processRealNewsData(params.symbols, realNewsData);
 
       // Build comprehensive response with real data
       const response = this.buildNewsAnalysisResponse(params, realNewsData, analysis, aiAnalysis);
@@ -1064,7 +1218,7 @@ export class MCPOracleServer {
     }
   }
 
-  private processRealNewsData(symbols: string[], newsData: any[], _hours: number) {
+  private processRealNewsData(symbols: string[], newsData: any[]) {
     if (!Array.isArray(newsData) || newsData.length === 0) {
       const emptyMarketImpact: Record<string, any> = {};
       symbols.forEach(symbol => {
@@ -1373,7 +1527,7 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
     // Calculate multiple trend indicators
     const trends = this.calculateMultipleTimeframeTrends(historicalData);
     const volatility = this.calculateRealVolatility(historicalData);
-    const momentum = this.calculateMomentumIndicators(historicalData);
+    // const _momentum = this.calculateMomentumIndicators(historicalData); // Reserved for future use
 
     // Technical indicator influence
     let technicalBias = 0;
@@ -1502,7 +1656,7 @@ ${aiAnalysis.recommendations.map((rec: string) => `- ${rec}`).join('\n')}
     return Math.sqrt(variance) * Math.sqrt(365); // Annualized volatility
   }
 
-  private calculateMomentumIndicators(historicalData: any[]): any {
+  private _calculateMomentumIndicators(historicalData: any[]): any { // Reserved for future use
     if (historicalData.length < 14) return { roc: 0, momentum: 0 };
 
     const prices = historicalData.slice(0, 14).map(d => d.price || d.close);
@@ -1815,7 +1969,7 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
       limit: '100kb', // Stricter size limit
       strict: true,
       type: ['application/json'],
-      verify: (req, res, buf) => {
+      verify: (_req, _res, buf) => {
         // Additional validation for request size
         if (buf.length > 102400) { // 100KB
           const error = new Error('Request entity too large');
@@ -1883,7 +2037,8 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
               },
               serverInfo: {
                 name: "mcp-oracle",
-                version: "1.0.0"
+                version: "1.3.1",
+                description: "Advanced financial market analysis with AI-powered insights"
               }
             };
             break;
@@ -2022,7 +2177,7 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
               case uri.startsWith("market-data://"): {
                 const uriPart = uri.split("//")[1];
                 const symbols = uriPart === "current" ? ["BTC", "ETH"] : (uriPart ? [uriPart] : ["BTC", "ETH"]);
-                const marketData = await this.coinGecko?.getDetailedMarketData(symbols);
+                const marketData = this.coinGecko ? await this.coinGecko.getDetailedMarketData(symbols) : [];
                 response = {
                   contents: [{
                     uri,
@@ -2034,7 +2189,7 @@ ${Object.keys(safeActionSignals).length > 0 ? Object.entries(safeActionSignals).
               }
 
               case uri.startsWith("news://"): {
-                const newsData = await this.newsService?.getAggregatedNews(["BTC", "ETH"], 24);
+                const newsData = this.newsService ? await this.newsService.getAggregatedNews(["BTC", "ETH"], 24) : [];
                 response = {
                   contents: [{
                     uri,

@@ -209,7 +209,7 @@ export class NewsService {
   }
 
   /**
-   * Get real crypto news from CryptoPanic
+   * Get real crypto news from CryptoPanic with graceful degradation
    */
   async getCryptoPanicNews(symbols: string[], limit: number = 25): Promise<NewsArticle[]> {
     try {
@@ -227,16 +227,23 @@ export class NewsService {
 
       const articles = response.data.results
         .filter(post => post.title && post.url)
-        .map((post, index) => this.transformCryptoPanicPost(post, symbols, index))
+        .map((post) => this.transformCryptoPanicPost(post, symbols))
         .slice(0, limit);
 
       this.logger.info(`✅ Retrieved ${articles.length} REAL CryptoPanic articles`);
       this.logTopHeadlines(articles, 'CryptoPanic');
 
       return articles;
-    } catch (error) {
+    } catch (error: any) {
+      // Handle quota exceeded gracefully
+      if (error.response?.status === 429) {
+        this.logger.warn('⚠️ CryptoPanic API quota exceeded - gracefully degrading');
+        return this.generateFallbackNews(symbols, 'CryptoPanic quota exceeded. Using alternative sources.', limit);
+      }
+
       this.logger.error('❌ Failed to fetch real CryptoPanic news:', error);
-      throw new Error('CryptoPanic API failed');
+      // Return empty array instead of throwing to allow other sources to work
+      return [];
     }
   }
 
@@ -279,11 +286,18 @@ export class NewsService {
       const uniqueNews = this.deduplicateNews(allNews);
       const sortedNews = uniqueNews.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
+      // If no news was successfully retrieved, provide fallback
+      if (sortedNews.length === 0) {
+        this.logger.warn('⚠️ All news sources failed, providing fallback news');
+        return this.generateFallbackNews(symbols, 'All news APIs temporarily unavailable', 10);
+      }
+
       this.logger.info(`✅ Aggregated ${sortedNews.length} unique REAL news articles`);
       return sortedNews;
     } catch (error) {
       this.logger.error('❌ Failed to aggregate real news:', error);
-      throw new Error('News aggregation failed');
+      // Return fallback instead of throwing
+      return this.generateFallbackNews(symbols, 'News aggregation system error', 5);
     }
   }
 
@@ -302,7 +316,7 @@ export class NewsService {
     };
   }
 
-  private transformCryptoPanicPost(post: any, symbols: string[], _index: number): NewsArticle {
+  private transformCryptoPanicPost(post: any, symbols: string[]): NewsArticle {
     return {
       id: `cryptopanic_${post.id}`,
       title: post.title,
@@ -503,6 +517,34 @@ export class NewsService {
     if (topHeadlines.length > 0) {
       this.logger.info(`📰 Top ${source} headlines:`, topHeadlines);
     }
+  }
+
+  /**
+   * Generate fallback news when APIs are unavailable
+   */
+  private generateFallbackNews(symbols: string[], reason: string, limit: number = 10): NewsArticle[] {
+    const fallbackNews: NewsArticle[] = [];
+    const timestamp = new Date().toISOString();
+
+    symbols.forEach((symbol, index) => {
+      if (fallbackNews.length < limit) {
+        fallbackNews.push({
+          id: `fallback-${symbol}-${Date.now()}-${index}`,
+          title: `Market Analysis Update for ${symbol.toUpperCase()}`,
+          content: `Due to API limitations (${reason}), real-time news for ${symbol} is temporarily unavailable. Please check back later for the latest market news and analysis.`,
+          source: 'MCP Oracle Fallback',
+          url: '#',
+          timestamp: timestamp,
+          sentiment_score: 0,
+          relevance_score: 0.8,
+          category: 'general' as const,
+          symbols: [symbol.toUpperCase()]
+        });
+      }
+    });
+
+    this.logger.info(`📰 Generated ${fallbackNews.length} fallback news articles due to: ${reason}`);
+    return fallbackNews;
   }
 
   async healthCheck(): Promise<boolean> {

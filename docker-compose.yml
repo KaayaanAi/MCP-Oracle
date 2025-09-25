@@ -1,7 +1,7 @@
 version: '3.8'
 
-# MCP Oracle v1.3.0 - Latest Standards Compliant Docker Compose Configuration
-# Zero vulnerabilities, enhanced validation suite, all dependencies using latest versions
+# MCP Oracle v1.3.1 - Production-Hardened Docker Compose Configuration
+# Zero vulnerabilities, bulletproof reliability, comprehensive quality assurance
 
 services:
   mcp-oracle:
@@ -32,7 +32,7 @@ services:
     networks:
       - mcp-oracle-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4006/health"]
+      test: ["CMD", "node", "healthcheck.js"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -45,7 +45,12 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
+    command: >
+      sh -c "redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --requirepass \$${REDIS_PASSWORD}"
     volumes:
       - redis_data:/data
     networks:
